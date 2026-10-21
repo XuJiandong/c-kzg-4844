@@ -51,3 +51,10 @@ zig-check:
 .PHONY: zig
 zig: zig-check
 	@zig build test
+
+.PHONY: ckb-build ckb-test
+ckb-build:
+	$(MAKE) -C ckb-tests build
+
+ckb-test:
+	$(MAKE) -C ckb-tests test

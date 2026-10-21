@@ -1,0 +1,15 @@
+[package]
+name = "ckb-kzg-tests"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+[dependencies]
+c-kzg = { path = "..", default-features = false, features = ["verification-only"] }
+ckb-std = { version = "=1.1.0", default-features = false, features = ["allocator", "log"] }
+log = { version = "0.4", default-features = false }
+
+[profile.release]
+panic = "abort"
+strip = true
+codegen-units = 1

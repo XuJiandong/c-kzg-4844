@@ -20,7 +20,7 @@
 #include "common/fr.h"
 #include "common/ret.h"
 
-#include <inttypes.h> /* For uint*_t */
+#include <stdint.h> /* For uint*_t */
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 // Macros

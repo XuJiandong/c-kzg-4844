@@ -250,6 +250,7 @@ out:
  * @param[in]   poly    The polynomial to commit to
  * @param[in]   s       The trusted setup
  */
+#ifndef CKZG_VERIFICATION_ONLY
 static C_KZG_RET poly_to_kzg_commitment(g1_t *out, const fr_t *poly, const KZGSettings *s) {
     return g1_lincomb_fast(out, s->g1_values_lagrange_brp, poly, FIELD_ELEMENTS_PER_BLOB);
 }
@@ -278,6 +279,8 @@ out:
     c_kzg_free(poly);
     return ret;
 }
+
+#endif
 
 /* Forward function declaration */
 static C_KZG_RET verify_kzg_proof_impl(
@@ -365,6 +368,7 @@ static C_KZG_RET verify_kzg_proof_impl(
     return C_KZG_OK;
 }
 
+#ifndef CKZG_VERIFICATION_ONLY
 /* Forward function declaration */
 static C_KZG_RET compute_kzg_proof_impl(
     KZGProof *proof_out, fr_t *y_out, const fr_t *poly, const fr_t *z, const KZGSettings *s
@@ -533,6 +537,8 @@ out:
     c_kzg_free(poly);
     return ret;
 }
+
+#endif
 
 /**
  * Given a blob and its proof, verify that it corresponds to the provided commitment.

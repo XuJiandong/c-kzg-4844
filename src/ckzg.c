@@ -22,6 +22,7 @@
 #include "common/utils.c"
 #include "eip4844/blob.c"
 #include "eip4844/eip4844.c"
+#ifndef CKZG_VERIFICATION_ONLY
 #include "eip7594/cell.c"
 #include "eip7594/eip7594.c"
 #include "eip7594/fft.c"
@@ -29,3 +30,5 @@
 #include "eip7594/poly.c"
 #include "eip7594/recovery.c"
 #include "setup/setup.c"
+
+#endif

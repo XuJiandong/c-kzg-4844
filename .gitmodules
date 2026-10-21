@@ -1,3 +1,7 @@
 [submodule "blst"]
 	path = blst
-	url = https://github.com/supranational/blst
+	url = https://github.com/XuJiandong/blst.git
+	branch = port-riscv
+[submodule "deps/ckb-c-stdlib"]
+	path = deps/ckb-c-stdlib
+	url = https://github.com/nervosnetwork/ckb-c-stdlib.git

@@ -17,7 +17,7 @@
 #include "common/fr.h"
 #include "common/bytes.h"
 
-#include <inttypes.h> /* For uint*_t */
+#include <stdint.h> /* For uint*_t */
 #include <stdbool.h>  /* For bool */
 
 /**

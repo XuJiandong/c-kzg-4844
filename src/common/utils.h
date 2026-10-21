@@ -19,7 +19,7 @@
 #include "common/ec.h"
 #include "common/ret.h"
 
-#include <inttypes.h> /* For uint*_t */
+#include <stdint.h> /* For uint*_t */
 #include <stdbool.h>  /* For bool */
 #include <stddef.h>   /* For size_t */
 

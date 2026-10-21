@@ -9,7 +9,85 @@ fn main() {
 
     let c_src_dir = root_dir.join("src");
 
+    let riscv = env::var("CARGO_CFG_TARGET_ARCH").unwrap() == "riscv64";
+    let verification = env::var_os("CARGO_FEATURE_VERIFICATION_ONLY").is_some();
+    if riscv && !verification {
+        panic!("RISC-V requires --no-default-features --features verification-only");
+    }
+    if verification
+        && (env::var_os("CARGO_FEATURE_ETHEREUM_KZG_SETTINGS").is_some()
+            || env::var_os("CARGO_FEATURE_GENERATE_BINDINGS").is_some())
+    {
+        panic!("verification-only requires disabling ethereum_kzg_settings and generate-bindings");
+    }
+
+    let compiler = env::var("CC").unwrap_or_else(|_| "clang".into());
+    let output = std::process::Command::new(&compiler)
+        .arg("--version")
+        .output()
+        .expect("clang >= 19 is required but was not found; set CC to clang");
+    let version = String::from_utf8_lossy(&output.stdout);
+    let major = version
+        .split("clang version ")
+        .nth(1)
+        .and_then(|s| s.split('.').next())
+        .and_then(|s| s.parse::<u32>().ok());
+    assert!(
+        output.status.success() && major.is_some_and(|v| v >= 19),
+        "Only clang >= 19 is supported (CC={compiler})"
+    );
+
     let mut cc = cc::Build::new();
+    cc.compiler(&compiler);
+    if verification {
+        cc.define("CKZG_VERIFICATION_ONLY", None);
+    }
+    if riscv {
+        let runtime = root_dir.join("deps/ckb-c-stdlib");
+        assert!(
+            runtime.join("libc/stdlib.h").exists(),
+            "Missing ckb-c-stdlib: run git submodule update --init --recursive"
+        );
+        cc.no_default_flags(true)
+            .flag("--target=riscv64")
+            .flag("-march=rv64imc_zba_zbb_zbc_zbs")
+            .flag("-O3")
+            .flag("-ffunction-sections")
+            .flag("-fdata-sections")
+            .flag("-fno-builtin-printf")
+            .flag("-fno-builtin-memcmp")
+            .flag("-nostdlib")
+            .flag("-nostdinc")
+            .include(root_dir.join("src/ckb"))
+            .include(runtime.join("libc"))
+            .include(&runtime)
+            .archiver(env::var("AR").unwrap_or_else(|_| "llvm-ar".into()))
+            .define("CKB_DECLARATION_ONLY", None)
+            .define("__BLST_NO_ASM__", None)
+            .define("__BLST_NO_CPUID__", None)
+            .define("malloc", "ckzg_malloc")
+            .define("calloc", "ckzg_calloc")
+            .define("free", "ckzg_free");
+        let mut libc = cc.clone();
+        libc.define("__SHARED_LIBRARY__", None)
+            .flag("-Wno-unused-parameter")
+            .file(runtime.join("libc/src/impl.c"))
+            .compile("ckzg_ckb_libc");
+        // Use RV64 multiplication assembly with C fallbacks for other operations.
+        let mut blst = cc.clone();
+        blst.define("__BLST_RISCV_ASM__", None)
+            .file(blst_base_dir.join("src/asm/blst_mul_mont_384.riscv.S"))
+            .file(blst_base_dir.join("src/asm/blst_mul_mont_384x.riscv.S"))
+            .file(blst_base_dir.join("src/server.c"))
+            .compile("blst");
+        println!("cargo:rerun-if-changed={}", runtime.display());
+        println!(
+            "cargo:rerun-if-changed={}",
+            blst_base_dir.join("src").display()
+        );
+    }
+    println!("cargo:rerun-if-changed={}", c_src_dir.display());
+    println!("cargo:rerun-if-env-changed=CC");
 
     #[cfg(all(windows, target_env = "msvc"))]
     {
@@ -30,7 +108,11 @@ fn main() {
     cc.include(c_src_dir.clone());
     cc.include(blst_headers_dir.clone());
     cc.warnings(false);
-    cc.file(c_src_dir.join("ckzg.c"));
+    cc.file(c_src_dir.join(if verification {
+        "verification.c"
+    } else {
+        "ckzg.c"
+    }));
     #[cfg(not(debug_assertions))]
     cc.define("NDEBUG", None);
 

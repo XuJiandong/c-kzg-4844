@@ -1,0 +1,194 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Blob Tree — Two levels of blobs, one membership proof</title>
+  <link rel="stylesheet" href="tutorial.css">
+</head>
+<body>
+<header>
+  <span class="eyebrow">BLOB TREE · RUST · EIP-4844 · PROOF OF CONCEPT</span>
+  <h1>Two levels of blobs.<br>One membership proof.</h1>
+  <p class="lead">Commit to as many as 16,777,216 elements in a tree with just two levels. Whether you query one element or many, the proof reduces to one KZG verification call.</p>
+  <nav aria-label="Sections">
+    <a href="#tree">01 Tree structure</a>
+    <a href="#proof">02 Proof reduction</a>
+    <a href="#security">03 Security boundaries</a>
+    <a href="#run">04 Run the code</a>
+  </nav>
+</header>
+<main>
+  <section id="tree">
+    <span class="eyebrow">01 / FROM ELEMENTS TO THE PUBLIC ROOT</span>
+    <h2>Every position has a two-level path.</h2>
+    <p>Split an element's zero-based index <math xmlns="http://www.w3.org/1998/Math/MathML"><mi>i</mi></math> into <math xmlns="http://www.w3.org/1998/Math/MathML"><mrow><mi mathvariant="normal">row</mi><mo>=</mo><mrow><mo>⌊</mo><mfrac><mi>i</mi><mn>4096</mn></mfrac><mo>⌋</mo></mrow></mrow></math> and <math xmlns="http://www.w3.org/1998/Math/MathML"><mrow><mi mathvariant="normal">column</mi><mo>=</mo><mrow><mi>i</mi><mspace width="0.3em"/><mi mathvariant="normal">mod</mi><mspace width="0.3em"/><mn>4096</mn></mrow></mrow></math>. Each bottom-level blob stores element hashes. The top-level blob stores hashes of child commitments. Both hashes are reduced modulo the BLS12-381 scalar field modulus <math xmlns="http://www.w3.org/1998/Math/MathML"><mi>r</mi></math>.</p>
+    <p><strong>Worked example:</strong> index <math xmlns="http://www.w3.org/1998/Math/MathML"><mrow><mn>4103</mn><mo>=</mo><mrow><mn>1</mn><mo>×</mo><mn>4096</mn><mo>+</mo><mn>7</mn></mrow></mrow></math> belongs to child 1, slot 7. Its element hash is committed by <math xmlns="http://www.w3.org/1998/Math/MathML"><msub><mi>C</mi><mn>1</mn></msub></math>, and the hash of <math xmlns="http://www.w3.org/1998/Math/MathML"><msub><mi>C</mi><mn>1</mn></msub></math> occupies top-level slot 1.</p>
+    <svg viewBox="0 0 900 400" role="img" aria-labelledby="tree-title tree-desc">
+      <title id="tree-title">The path from element 4103 to the public root</title>
+      <desc id="tree-desc">Child slot 7 stores the element hash. Its child commitment C_1 is hashed into top-level slot 1. The public root contains the top-level commitment R and the vector length n. Both levels have 4096 slots.</desc>
+      <defs><marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M 0 0 L 10 5 L 0 10 z" fill="#557568"/></marker></defs>
+      <path class="edge" d="M450 90 V125 M450 185 V225 M450 280 V320"/>
+      <rect class="root" x="315" y="20" width="270" height="70" rx="12"/>
+      <text x="450" y="48" class="light">Public root (R, n)</text>
+      <text x="450" y="72" class="light small">R = Commit(top-level blob)</text>
+      <rect class="layer" x="80" y="125" width="740" height="60" rx="8"/>
+      <rect class="selected" x="335" y="125" width="230" height="60" rx="8"/>
+      <text x="205" y="160">… Other top slots …</text>
+      <text x="450" y="150">Top-level slot 1</text>
+      <text x="450" y="173" class="small">H<tspan baseline-shift="sub" font-size="0.75em">child</tspan>(C<tspan baseline-shift="sub" font-size="0.75em">1</tspan>)</text>
+      <text x="690" y="160">4096 slots total</text>
+      <rect class="commitment" x="315" y="225" width="270" height="55" rx="8"/>
+      <text x="450" y="249">C<tspan baseline-shift="sub" font-size="0.75em">1</tspan> = Commit(child blob)</text>
+      <text x="450" y="269" class="small">48-byte compressed G1 point</text>
+      <rect class="layer" x="80" y="320" width="740" height="60" rx="8"/>
+      <rect class="selected" x="335" y="320" width="230" height="60" rx="8"/>
+      <text x="205" y="355">… Other elements …</text>
+      <text x="450" y="345">Child slot 7</text>
+      <text x="450" y="368" class="small">H<tspan baseline-shift="sub" font-size="0.75em">leaf</tspan>(value)</text>
+      <text x="690" y="355">4096 slots total</text>
+    </svg>
+    <p class="caption">The root is constructed from the bottom up. Lines show dependencies; the diagram does not draw all 4096 slots to scale.</p>
+    <aside><strong>A blob stores evaluations, not coefficients.</strong> Its 4096 slots hold polynomial values at fixed points. Slot <code>s</code> corresponds to <math xmlns="http://www.w3.org/1998/Math/MathML"><msup><mi>ω</mi><mrow><msub><mi mathvariant="normal">bitreverse</mi><mn>12</mn></msub><mo>(</mo><mi>s</mi><mo>)</mo></mrow></msup></math>, where <code>ω = γ^((r − 1) / 4096) mod r</code>. Here, <code>γ</code> (gamma) denotes the multiplicative generator of the BLS12-381 scalar field selected by the Ethereum specification; using this fixed generator keeps the evaluation domain consistent with c-kzg. The Rust implementation uses FFTs to convert representations consistently with c-kzg.</aside>
+  </section>
+
+  <section id="proof">
+    <span class="eyebrow">02 / QUERIES SHARE CHILD COMMITMENTS</span>
+    <h2>Share child commitments, then combine the openings.</h2>
+    <p>A proof includes an 8-byte query count and an 8-byte index per queried element, then one commitment for each queried child, followed by two points: the aggregate quotient commitment <math xmlns="http://www.w3.org/1998/Math/MathML"><mi>D</mi></math> and the opening witness <math xmlns="http://www.w3.org/1998/Math/MathML"><mi>W</mi></math>. Each point occupies 48 bytes.</p>
+    <p>For queries <code>[0, 7, 4096, 4097]</code>, child 0 supplies columns 0 and 7, while child 1 supplies columns 0 and 1. The four queries share two child commitments.</p>
+    <div class="metrics">
+      <div><span>Queried elements k</span><strong>4</strong></div>
+      <div><span>Queried children m</span><strong>2</strong></div>
+      <div><span>Proof bytes</span><strong>232</strong></div>
+      <div><span>Pairing terms</span><strong>2</strong></div>
+    </div>
+    <div class="size-chart" role="img" aria-label="The 232-byte proof contains 40 bytes of count and indices, 96 bytes of child commitments and 96 bytes for D and W.">
+      <div class="fixed-size">Count + indices · 40 B</div>
+      <div class="child-size">Child commitments · 96 B</div>
+      <div class="fixed-size">D + W · 96 B</div>
+    </div>
+    <div class="table-wrap">
+      <table>
+        <caption>Proof sizes for different query distributions</caption>
+        <thead><tr><th scope="col">Queries</th><th scope="col">Children m</th><th scope="col">Proof bytes</th></tr></thead>
+        <tbody>
+          <tr><td>One element: [7]</td><td>1</td><td>160</td></tr>
+          <tr><td>Four elements in one child: [0, 7, 77, 4095]</td><td>1</td><td>184</td></tr>
+          <tr><td>Two children: [0, 7, 4096, 4097]</td><td>2</td><td>232</td></tr>
+          <tr><td>Four children: [0, 4096, 8192, 16777215]</td><td>4</td><td>328</td></tr>
+          <tr><td>All 4096 elements in one child</td><td>1</td><td>32920</td></tr>
+          <tr><td>At least one element in every child</td><td>4096</td><td>196712 + 8k</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p class="caption"><math xmlns="http://www.w3.org/1998/Math/MathML"><mrow><mtext>Proof size</mtext><mo>=</mo><mrow><mn>8</mn><mo>+</mo><mn>8</mn><mi>k</mi><mo>+</mo><mn>48</mn><mi>m</mi><mo>+</mo><mn>96</mn></mrow></mrow></math> bytes, including query indices and their count but excluding the public root and original elements. Each example assumes the vector is long enough to contain every queried index. Verification always uses two pairing terms.</p>
+
+    <h3>The complete reduction, step by step</h3>
+    <p>The reduction first commits to an aggregate quotient polynomial and then checks its relation to the claimed openings at a transcript-derived point. All five steps are shown below. Here, statement 0 is the top level, and statements 1 through m are the queried children in ascending child-index order.</p>
+    <aside><strong>Where Shplonk is used:</strong> steps 2–4 perform the Shplonk-style reduction: aggregate the quotient polynomials, commit to the aggregate before deriving the checking point, then reduce all claimed openings to the single claim <code>g(z) = y</code>. Step 1 binds the public statement to the transcript; step 5 completes the proof with a standard single-point KZG opening and verification. This implementation defines its own transcript and wire format; it does not claim interoperability with other Shplonk implementations.</aside>
+    <article class="step">
+      <span class="eyebrow">STEP 1 / FIX THE STATEMENT</span>
+      <h3>Bind everything the proof claims.</h3>
+      <div class="equation" tabindex="0" role="region" aria-label="Statement transcript">
+      <math xmlns="http://www.w3.org/1998/Math/MathML" display="block">
+      <mtable columnalign="right center left" columnspacing="0.35em" rowspacing="0.8em">
+        <mtr><mtd><mi>T</mi></mtd><mtd><mo>=</mo></mtd><mtd><mrow><mi mathvariant="normal">Encode</mi><mo>(</mo><mtext>protocol domain, root, queries</mtext><mo>,</mo><mtext>values, child commitments</mtext><mo>)</mo></mrow></mtd></mtr>
+      </mtable>
+      </math>
+    </div>
+      <p>The root contains both the commitment and vector length. The top-level opening claims child-commitment hashes; each child opening claims element hashes. Queries and child commitments use their canonical order. <code>Encode</code> includes the counts and lengths specified in the design document.</p>
+    </article>
+    <article class="step">
+      <span class="eyebrow">STEP 2 / SHPLONK · DERIVE ρ</span>
+      <h3>Combine the quotient polynomials.</h3>
+      <div class="equation" tabindex="0" role="region" aria-label="Aggregate quotient polynomials">
+      <math xmlns="http://www.w3.org/1998/Math/MathML" display="block">
+      <mtable columnalign="right center left" columnspacing="0.35em" rowspacing="0.8em">
+        <mtr><mtd><mi>ρ</mi></mtd><mtd><mo>=</mo></mtd><mtd><mrow><mi mathvariant="normal">hash_field</mi><mo>(</mo><mtext>“rho”</mtext><mo>,</mo><mrow><mo>[</mo><mi>T</mi><mo>]</mo></mrow><mo>)</mo></mrow></mtd></mtr>
+        <mtr><mtd><mrow><msub><mi>q</mi><mi>i</mi></msub><mo>(</mo><mi>X</mi><mo>)</mo></mrow></mtd><mtd><mo>=</mo></mtd><mtd><mfrac><mrow><mrow><msub><mi>f</mi><mi>i</mi></msub><mo>(</mo><mi>X</mi><mo>)</mo></mrow><mo>−</mo><mrow><msub><mi>I</mi><mi>i</mi></msub><mo>(</mo><mi>X</mi><mo>)</mo></mrow></mrow><mrow><msub><mi>Z</mi><mi>i</mi></msub><mo>(</mo><mi>X</mi><mo>)</mo></mrow></mfrac></mtd></mtr>
+        <mtr><mtd><mrow><mi>Q</mi><mo>(</mo><mi>X</mi><mo>)</mo></mrow></mtd><mtd><mo>=</mo></mtd><mtd><mrow><munderover><mo>∑</mo><mrow><mi>i</mi><mo>=</mo><mn>0</mn></mrow><mi>m</mi></munderover><mrow><msup><mi>ρ</mi><mi>i</mi></msup><mrow><msub><mi>q</mi><mi>i</mi></msub><mo>(</mo><mi>X</mi><mo>)</mo></mrow></mrow></mrow></mtd></mtr>
+      </mtable>
+      </math>
+    </div>
+      <p><math xmlns="http://www.w3.org/1998/Math/MathML"><msub><mi>I</mi><mi>i</mi></msub></math> interpolates the claimed point-value pairs, and <math xmlns="http://www.w3.org/1998/Math/MathML"><msub><mi>Z</mi><mi>i</mi></msub></math> vanishes at their evaluation points. The division has no remainder when the opening claims are correct. The nonzero coefficient <math xmlns="http://www.w3.org/1998/Math/MathML"><mi>ρ</mi></math> is derived from the complete transcript.</p>
+    </article>
+    <article class="step">
+      <span class="eyebrow">STEP 3 / SHPLONK · COMMIT TO THE QUOTIENT</span>
+      <h3>Fix D before deriving the checking point.</h3>
+      <div class="equation" tabindex="0" role="region" aria-label="Quotient commitment and checking point">
+      <math xmlns="http://www.w3.org/1998/Math/MathML" display="block">
+      <mtable columnalign="right center left" columnspacing="0.35em" rowspacing="0.8em">
+        <mtr><mtd><mi>D</mi></mtd><mtd><mo>=</mo></mtd><mtd><mrow><mi mathvariant="normal">Commit</mi><mo>(</mo><mi>Q</mi><mo>)</mo></mrow></mtd></mtr>
+        <mtr><mtd><mi>z</mi></mtd><mtd><mo>=</mo></mtd><mtd><mrow><mi mathvariant="normal">hash_field</mi><mo>(</mo><mtext>“z”</mtext><mo>,</mo><mrow><mo>[</mo><mi>T</mi><mo>,</mo><mi>D</mi><mo>]</mo></mrow><mo>)</mo></mrow></mtd></mtr>
+      </mtable>
+      </math>
+    </div>
+      <p><math xmlns="http://www.w3.org/1998/Math/MathML"><mi>D</mi></math> is the first of the two additional proof points. Deriving <math xmlns="http://www.w3.org/1998/Math/MathML"><mi>z</mi></math> from both <math xmlns="http://www.w3.org/1998/Math/MathML"><mi>T</mi></math> and <math xmlns="http://www.w3.org/1998/Math/MathML"><mi>D</mi></math> binds the checking point to the quotient commitment. Each <code>hash_field</code> call uses domain-separated, length-prefixed SHA-256 followed by reduction modulo <math xmlns="http://www.w3.org/1998/Math/MathML"><mi>r</mi></math>.</p>
+    </article>
+    <article class="step">
+      <span class="eyebrow">STEP 4 / SHPLONK · DERIVE A SINGLE OPENING CLAIM</span>
+      <h3>Reconstruct the combined commitment.</h3>
+      <div class="equation" tabindex="0" role="region" aria-label="Combined opening claim">
+      <math xmlns="http://www.w3.org/1998/Math/MathML" display="block">
+      <mtable columnalign="right center left" columnspacing="0.35em" rowspacing="0.8em">
+        <mtr><mtd><msub><mi>a</mi><mi>i</mi></msub></mtd><mtd><mo>=</mo></mtd><mtd><mfrac><msup><mi>ρ</mi><mi>i</mi></msup><mrow><msub><mi>Z</mi><mi>i</mi></msub><mo>(</mo><mi>z</mi><mo>)</mo></mrow></mfrac></mtd></mtr>
+        <mtr><mtd><mrow><mi>g</mi><mo>(</mo><mi>X</mi><mo>)</mo></mrow></mtd><mtd><mo>=</mo></mtd><mtd><mrow><mrow><munderover><mo>∑</mo><mrow><mi>i</mi><mo>=</mo><mn>0</mn></mrow><mi>m</mi></munderover><mrow><msub><mi>a</mi><mi>i</mi></msub><mrow><msub><mi>f</mi><mi>i</mi></msub><mo>(</mo><mi>X</mi><mo>)</mo></mrow></mrow></mrow><mo>−</mo><mrow><mi>Q</mi><mo>(</mo><mi>X</mi><mo>)</mo></mrow></mrow></mtd></mtr>
+        <mtr><mtd><msub><mi>C</mi><mi>g</mi></msub></mtd><mtd><mo>=</mo></mtd><mtd><mrow><mrow><munderover><mo>∑</mo><mrow><mi>i</mi><mo>=</mo><mn>0</mn></mrow><mi>m</mi></munderover><mrow><msub><mi>a</mi><mi>i</mi></msub><msub><mi>C</mi><mi>i</mi></msub></mrow></mrow><mo>−</mo><mi>D</mi></mrow></mtd></mtr>
+        <mtr><mtd><mi>y</mi></mtd><mtd><mo>=</mo></mtd><mtd><mrow><munderover><mo>∑</mo><mrow><mi>i</mi><mo>=</mo><mn>0</mn></mrow><mi>m</mi></munderover><mrow><msub><mi>a</mi><mi>i</mi></msub><mrow><msub><mi>I</mi><mi>i</mi></msub><mo>(</mo><mi>z</mi><mo>)</mo></mrow></mrow></mrow></mtd></mtr>
+      </mtable>
+      </math>
+    </div>
+      <p>The remaining claim is <math xmlns="http://www.w3.org/1998/Math/MathML"><mrow><mrow><mi>g</mi><mo>(</mo><mi>z</mi><mo>)</mo></mrow><mo>=</mo><mi>y</mi></mrow></math>. The verifier derives every weight, the commitment <math xmlns="http://www.w3.org/1998/Math/MathML"><msub><mi>C</mi><mi>g</mi></msub></math>, and <math xmlns="http://www.w3.org/1998/Math/MathML"><mi>y</mi></math> from the public statement and <math xmlns="http://www.w3.org/1998/Math/MathML"><mi>D</mi></math>. No additional evaluations need to be transmitted.</p>
+    </article>
+    <article class="step">
+      <span class="eyebrow">STEP 5 / KZG · OPEN AND VERIFY</span>
+      <h3>Check one equation with two pairing terms.</h3>
+      <div class="equation" tabindex="0" role="region" aria-label="KZG opening and pairing verification">
+      <math xmlns="http://www.w3.org/1998/Math/MathML" display="block">
+      <mtable columnalign="right center left" columnspacing="0.35em" rowspacing="0.8em">
+        <mtr><mtd><mi>W</mi></mtd><mtd><mo>=</mo></mtd><mtd><mrow><mtext>KZG opening witness for</mtext><mspace width="0.4em"/><mrow><mrow><mi>g</mi><mo>(</mo><mi>z</mi><mo>)</mo></mrow><mo>=</mo><mi>y</mi></mrow></mrow></mtd></mtr>
+        <mtr><mtd><mrow><mi>e</mi><mo>(</mo><mrow><msub><mi>C</mi><mi>g</mi></msub><mo>−</mo><mi>y</mi><mo>·</mo><msub><mi>G</mi><mn>1</mn></msub></mrow><mo>,</mo><msub><mi>G</mi><mn>2</mn></msub><mo>)</mo></mrow></mtd><mtd><mo>=</mo></mtd><mtd><mrow><mi>e</mi><mo>(</mo><mi>W</mi><mo>,</mo><mrow><mo>[</mo><mi>τ</mi><mo>]</mo><msub><mi>G</mi><mn>2</mn></msub><mo>−</mo><mi>z</mi><mo>·</mo><msub><mi>G</mi><mn>2</mn></msub></mrow><mo>)</mo></mrow></mtd></mtr>
+      </mtable>
+      </math>
+    </div>
+      <p><math xmlns="http://www.w3.org/1998/Math/MathML"><mi>W</mi></math> is the second additional 48-byte point. The verifier calls c-kzg's <code>verify_kzg_proof</code> once. The pairing equation uses two Miller loops and one final exponentiation. Beyond the count, indices, and child commitments, the proof always contains exactly 96 bytes.</p>
+    </article>
+    <p class="caption">The order is T → ρ → D → z → W. This static tutorial explains the structure and proof size; run the Rust example to perform actual cryptographic computations.</p>
+  </section>
+
+  <section id="security">
+    <span class="eyebrow">03 / SECURITY DEPENDS ON THE COMPLETE RELATION</span>
+    <h2>Connect each element all the way to the root.</h2>
+    <div class="notes">
+      <article><h3>Verify both levels</h3><p>The child opening binds the element to its child commitment. The top-level opening binds that commitment's hash to the root. Both are needed to establish membership in this tree.</p></article>
+      <article><h3>Preserve the transcript order</h3><p>The challenge ρ binds the complete statement; z also binds D. Letting the prover choose D after seeing z would let it tailor a false relation to that single checking point.</p></article>
+      <article><h3>Hash before reducing</h3><p>Directly reducing raw integers would identify x and x+r. Instead, SHA-256 hashes domain-separated, length-prefixed byte strings before the digest is reduced to a field element.</p></article>
+      <article><h3>Authenticate the length</h3><p>The trusted root is the complete pair (R, n). Out-of-range and padding positions are not members. Queries must be strictly increasing, unique, and less than n.</p></article>
+    </div>
+    <h3>Degenerate challenges and special curve points</h3>
+    <p>If ρ is zero or z equals any queried evaluation point at either tree level, retry its hash with a big-endian u64 nonce starting at 1. Prover and verifier select the first valid candidate independently, so no nonce is sent. Retrying z keeps the transcript and quotient commitment fixed. Counter exhaustion returns an error. All external G1 points undergo canonical-encoding and subgroup checks. The point at infinity is permitted because a zero polynomial has a valid zero commitment. Applications must accept only a verification result of <code>Ok(true)</code>.</p>
+    <h3>Assumptions and limits</h3>
+    <p>This proof of concept has not undergone an independent cryptographic audit. It depends on a trusted root, the Ethereum trusted setup, KZG binding, and SHA-256 security assumptions. It provides neither hiding nor zero knowledge. Negative tests help detect implementation errors but cannot replace a cryptographic audit. Large public statements also require application-level resource limits.</p>
+  </section>
+
+  <section id="run">
+    <span class="eyebrow">04 / FROM THE DIAGRAM TO THE CODE</span>
+    <h2>Run a proof across both levels.</h2>
+    <p>From the repository root:</p>
+    <pre><code>cargo test --manifest-path blob-tree/Cargo.toml --locked
+cargo run --manifest-path blob-tree/Cargo.toml --example basic --locked</code></pre>
+    <p>The example uses the public API as follows, with enough values to include every queried index:</p>
+    <pre><code>let tree = Tree::new(&amp;values)?;
+// Tree construction and verification sort values by big-endian byte order.
+// Duplicate values are rejected. Indices refer to positions in the sorted tree.
+// Check proof.indices if your application requires specific positions.
+let (values, proof) = tree.prove(&amp;[0, 7, 4096, 4097])?;
+assert!(verify(tree.root(), &amp;values, &amp;proof)?);
+// Four indices, two children: 8 + 4 × 8 + 2 × 48 + 96 = 232 bytes</code></pre>
+    <p>Continue with the <a href="DESIGN.md">design and terminology</a>, <a href="src/lib.rs">Rust protocol implementation</a>, and <a href="tests/membership.rs">interface tests</a>.</p>
+  </section>
+</main>
+<footer>Blob Tree · BLS12-381 · Fixed Ethereum SRS · Static offline tutorial</footer>
+</body>
+</html>

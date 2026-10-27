@@ -1,18 +1,19 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 900 110" role="img" aria-labelledby="title desc">
-  <title id="title">232-byte membership proof layout</title>
-  <desc id="desc">Count and indices take 40 bytes; child commitments take 96 bytes; D and W take 96 bytes. Segment widths are proportional to byte counts.</desc>
+  <title id="title">212-byte membership proof layout</title>
+  <desc id="desc">Count and indices take 20 bytes; child commitments take 96 bytes; D and W take 96 bytes. Segment widths are proportional to byte counts.</desc>
   <rect width="900" height="110" fill="#f7f8f2"/>
   <g stroke="#f7f8f2" stroke-width="4">
-    <rect x="0" y="4" width="155.17" height="102" fill="#dce1ff"/>
-    <rect x="155.17" y="4" width="372.42" height="102" fill="#bde4b0"/>
-    <rect x="527.59" y="4" width="372.41" height="102" fill="#dce1ff"/>
+    <rect x="0" y="4" width="84.91" height="102" fill="#dce1ff"/>
+    <rect x="84.91" y="4" width="407.55" height="102" fill="#bde4b0"/>
+    <rect x="492.46" y="4" width="407.54" height="102" fill="#dce1ff"/>
   </g>
   <g fill="#193b30" font-family="system-ui, -apple-system, sans-serif" font-size="17" text-anchor="middle">
-    <text x="77.59" y="39">Count + indices</text>
-    <text x="77.59" y="77">40 B</text>
-    <text x="341.38" y="39">Child commitments</text>
-    <text x="341.38" y="77">96 B</text>
-    <text x="713.79" y="39">D + W</text>
-    <text x="713.79" y="77">96 B</text>
+    <text x="42.46" y="29">Count +</text>
+    <text x="42.46" y="51">indices</text>
+    <text x="42.46" y="82">20 B</text>
+    <text x="288.69" y="39">Child commitments</text>
+    <text x="288.69" y="77">96 B</text>
+    <text x="696.23" y="39">D + W</text>
+    <text x="696.23" y="77">96 B</text>
   </g>
 </svg>

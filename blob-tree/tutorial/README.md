@@ -1,6 +1,6 @@
 # Blob Tree: Two levels of blobs, one membership proof
 
-At its core, it is a two-level path tree built on [c-kzg-4844](https://github.com/ethereum/c-kzg-4844), with [Shplonk](https://eprint.iacr.org/2020/081.pdf). Commit to as many as 16,777,216（4096*4096) elements in a tree with just two levels. Whether you query one element or many, the proof reduces to one KZG verification call. 
+We already have [SMT](https://github.com/nervosnetwork/sparse-merkle-tree), but SMT proofs are quite large, especially when proving multiple elements at once. So we propose a new solution: the blob tree. At its core, it is a two-level path tree built on [c-kzg-4844](https://github.com/ethereum/c-kzg-4844), with [Shplonk](https://eprint.iacr.org/2020/081.pdf). Commit to as many as 16,777,216（4096*4096) elements in a tree with just two levels. Whether you query one element or many, the proof reduces to one KZG verification call. 
 
 ## 1. Tree structure
 
@@ -18,29 +18,41 @@ The root is constructed from the bottom up. Lines show dependencies; the diagram
 
 Share child commitments, then combine the openings.
 
-A proof includes an 8-byte query count and an 8-byte index per queried element, then one commitment for each queried child, followed by two points: the aggregate quotient commitment $D$ and the opening witness $W$. Each point occupies 48 bytes.
+A proof includes a 4-byte query count and a 4-byte index per queried element, then one commitment for each queried child, followed by two points: the aggregate quotient commitment $D$ and the opening witness $W$. Each point occupies 48 bytes. Four-byte unsigned integers cover both the maximum query count of $2^{24}$ and all indices from $0$ to $2^{24}-1$.
 
 For queries `[0, 7, 4096, 4097]`, child 0 supplies columns 0 and 7, while child 1 supplies columns 0 and 1. The four queries share two child commitments.
 
 | Queried elements $k$ | Queried children $m$ | Proof bytes | Pairing terms |
 | ---: | ---: | ---: | ---: |
-| 4 | 2 | 232 | 2 |
+| 4 | 2 | 212 | 2 |
 
-![The 232-byte proof: 40 bytes of count and indices, 96 bytes of child commitments, and 96 bytes for D and W.](assets/proof-layout.svg)
+![The 212-byte proof: 20 bytes of count and indices, 96 bytes of child commitments, and 96 bytes for D and W.](assets/proof-layout.svg)
 
-**Proof sizes for different query distributions**
+## Proof sizes
 
 | Queries | Children m | Proof bytes |
 | --- | --- | --- |
-| One element: [7] | 1 | 160 |
-| Four elements in one child: [0, 7, 77, 4095] | 1 | 184 |
-| Two children: [0, 7, 4096, 4097] | 2 | 232 |
-| Four children: [0, 4096, 8192, 16777215] | 4 | 328 |
-| At least one element in every child | 4096 | 196712 + 8k |
+| One element: [7] | 1 | 152 |
+| Four elements in one child: [0, 7, 77, 4095] | 1 | 164 |
+| Two children: [0, 7, 4096, 4097] | 2 | 212 |
+| Four children: [0, 4096, 8192, 16777215] | 4 | 308 |
+| At least one element in every child | 4096 | 196708 + 4k |
 
-$\text{Proof size} = 8 + 8 k + 48 m + 96$ bytes, including query indices and their count but excluding the public root and original elements. Each example assumes the vector is long enough to contain every queried index. Verification always uses two pairing terms. 
+$\text{Proof size} = 4 + 4 k + 48 m + 96$ bytes, including query indices and their count but excluding the public root and original elements. Each example assumes the vector is long enough to contain every queried index. Verification always uses two pairing terms.
 
-Note: the part `8k` can be smaller, see below.
+Consider the scenario where many elements must be proven. The `48m` term accounts for most of the proof size and can be estimated from the number of queried children. The worst case occurs when every child is in use. Since the number of children is about n/4096, where n is the total element count, the `48m` term is about n/85. For n = 100,000 and n = 1,000,000, this gives roughly 1.18K and 11.8K respectively. Even at its maximum size, the proof stays modest (196708 + 4k bytes), so it can still fit in CKB transactions.
+
+Compared with the [SMT](https://github.com/nervosnetwork/sparse-merkle-tree) below, the reduction is significant:
+| total elements | elements to be proven | Proof size (B) |
+| ---: | ---: | ---: |
+| 100000 | 1 | 599 |
+| 100000 | 10 | 4704 |
+| 100000 | 100 | 36850 |
+| 100000 | 1000 | 271763 |
+
+This proof size problem is why we seek a new tree structure rather than relying on the existing SMT.
+
+Note: the `4k` term can be smaller; see below.
 
 ### The complete reduction, step by step
 

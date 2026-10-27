@@ -3,7 +3,7 @@
 A Rust proof of concept for membership proofs over two levels of EIP-4844 blobs, with capacity for up to 4096² elements.
 
 - [Design, terminology, security assumptions, and encoding](DESIGN.md)
-- [Static tutorial](tutorial.html): open directly in a browser; works offline without JavaScript
+- [Tutorial](tutorial/README.md): illustrated tree structure, proof reduction, and security boundaries; readable directly on GitHub
 - [Protocol implementation](src/lib.rs) / [Algebra operations](src/algebra.rs)
 - [Example](examples/basic.rs) / [Tests](tests/membership.rs)
 

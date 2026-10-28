@@ -274,7 +274,8 @@ fn validate(root: &Root, indices: &[usize]) -> Result<BTreeMap<usize, Vec<usize>
     Ok(groups)
 }
 struct Statement {
-    commitment: Commitment,
+    // Retain the validated point so verification does not decode it again.
+    commitment: G,
     points: Vec<(F, F)>,
 }
 fn statements(
@@ -290,17 +291,16 @@ fn statements(
     if groups.len() != children.len() {
         return Err(Error::InvalidProofShape);
     }
-    G::decode(&root.commitment)?;
     let mut top = Statement {
-        commitment: root.commitment,
+        commitment: G::decode(&root.commitment)?,
         points: Vec::new(),
     };
     let mut rows = Vec::new();
     for ((&row, positions), &commitment) in groups.iter().zip(children) {
-        G::decode(&commitment)?;
+        let decoded = G::decode(&commitment)?;
         top.points.push((point(row), child_hash(&commitment)));
         rows.push(Statement {
-            commitment,
+            commitment: decoded,
             points: positions
                 .iter()
                 .map(|&p| (point(indices[p] % WIDTH), leaf(&values[p])))
@@ -403,9 +403,9 @@ pub fn verify(root: &Root, values: &[Vec<u8>], proof: &Proof) -> Result<bool> {
     let rho = rho(&t)?;
     let z = challenge(&t, &proof.quotient, &statements)?;
     let (weights, y) = weights(&statements, rho, z)?;
-    let mut combined = q.scale(F::zero() - F::one());
+    let mut combined = q.neg();
     for (statement, weight) in statements.iter().zip(weights) {
-        combined = combined.add(G::decode(&statement.commitment)?.scale(weight));
+        combined = combined.add(statement.commitment.scale(weight));
     }
     #[cfg(feature = "prover")]
     return Ok(ethereum_kzg_settings(0).verify_kzg_proof(
@@ -429,12 +429,37 @@ mod tests {
     use alloc::vec;
 
     #[test]
+    fn statements_reject_invalid_commitments() {
+        let infinity = G::default().bytes();
+        let root = Root {
+            commitment: infinity,
+            len: 1,
+        };
+        let mut torsion = [0; 48];
+        torsion[0] = 0x80; // On curve but outside the prime-order subgroup.
+        for invalid in [[0; 48], [0xff; 48], torsion] {
+            let bad_root = Root {
+                commitment: invalid,
+                ..root.clone()
+            };
+            assert!(matches!(
+                statements(&bad_root, &[0], &[vec![]], &[infinity]),
+                Err(Error::InvalidPoint)
+            ));
+            assert!(matches!(
+                statements(&root, &[0], &[vec![]], &[invalid]),
+                Err(Error::InvalidPoint)
+            ));
+        }
+    }
+
+    #[test]
     fn nondegenerate_challenges_preserve_original_hashes() {
         let t = b"test transcript";
         let d = G::default().bytes();
         assert_eq!(rho(t).unwrap(), hash_field(b"rho", &[t]));
         let statements = [Statement {
-            commitment: d,
+            commitment: G::default(),
             points: vec![(point(0), F::one())],
         }];
         assert_eq!(
@@ -484,7 +509,7 @@ mod tests {
         assert_ne!(expected, first);
         assert_ne!(expected, second);
         let statements = [first, second].map(|x| Statement {
-            commitment: d,
+            commitment: G::default(),
             points: vec![(x, F::one())],
         });
         let z = challenge(t, &d, &statements).unwrap();
@@ -496,7 +521,7 @@ mod tests {
     #[test]
     fn weights_still_reject_division_by_zero() {
         let statement = Statement {
-            commitment: G::default().bytes(),
+            commitment: G::default(),
             points: vec![(point(0), F::one())],
         };
         assert!(matches!(

@@ -33,13 +33,13 @@ fn rejected(root: &Root, values: &[Vec<u8>], proof: &Proof) {
     assert!(!matches!(verify(root, values, proof), Ok(true)));
 }
 
-/// Check an empty leaf and a six-query proof spanning two child blobs.
+/// Check the supplied native-generated membership proofs.
 /// The callback measures only verification of each valid, decoded proof.
-pub fn run(mut check_valid: impl FnMut(&Root, &[Vec<u8>], &Proof)) {
-    for fixture in [
-        include_bytes!("../fixtures/single.bin").as_slice(),
-        include_bytes!("../fixtures/multirow.bin").as_slice(),
-    ] {
+pub fn run<'a>(
+    fixtures: impl IntoIterator<Item = &'a [u8]>,
+    mut check_valid: impl FnMut(&Root, &[Vec<u8>], &Proof),
+) {
+    for fixture in fixtures {
         let (root, values, proof) = decode(fixture);
         check_valid(&root, &values, &proof);
         let encoded = proof.to_bytes();
@@ -110,9 +110,11 @@ pub fn run(mut check_valid: impl FnMut(&Root, &[Vec<u8>], &Proof)) {
                 verify(&root, &duplicate, &proof),
                 Err(Error::DuplicateValue)
             );
-            bad = proof.clone();
-            bad.children.swap(0, 1);
-            rejected(&root, &values, &bad);
+            if proof.children.len() > 1 {
+                bad = proof.clone();
+                bad.children.swap(0, 1);
+                rejected(&root, &values, &bad);
+            }
             for indices in [vec![], vec![0, 0], vec![1, 0]] {
                 bad.indices = indices;
                 rejected(&root, &values, &bad);

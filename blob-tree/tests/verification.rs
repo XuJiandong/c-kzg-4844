@@ -2,9 +2,15 @@ mod support;
 
 #[test]
 fn native_proofs_and_adversarial_inputs() {
-    support::run(|root, values, proof| {
-        assert_eq!(blob_tree::verify(root, values, proof), Ok(true));
-    });
+    support::run(
+        [
+            include_bytes!("fixtures/single.bin").as_slice(),
+            include_bytes!("fixtures/multirow.bin").as_slice(),
+        ],
+        |root, values, proof| {
+            assert_eq!(blob_tree::verify(root, values, proof), Ok(true));
+        },
+    );
 }
 
 #[test]

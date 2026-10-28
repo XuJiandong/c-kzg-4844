@@ -2,101 +2,60 @@ name: Rust
 on:
   push:
     branches:
-      - main
+      - port-riscv
   pull_request:
     branches:
-      - main
+      - port-riscv
 
 jobs:
-  feature-checks:
-    runs-on: ubuntu-latest
-    timeout-minutes: 30
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          submodules: recursive
-      - uses: dtolnay/rust-toolchain@02cb101ec7c40f2c49e1d9714d64511d8e1b74de # 1.0-6d653ac
-        with:
-          toolchain: stable
-          components: clippy, rustfmt
-      - uses: taiki-e/install-action@a092537a3547af99875d9fdf67ec85c08738a2f9 # biome-a092537
-      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
-        with:
-          workspaces: "./bindings/rust"
-      - name: cargo hack
-        working-directory: bindings/rust
-        run: cargo hack check --feature-powerset --depth 2
-      - name: Check that bindings are up to date
-        run: git diff --exit-code bindings/rust/src/bindings/generated.rs
-
   tests:
     runs-on: ${{ matrix.host }}
+    timeout-minutes: 30
     strategy:
-      fail-fast: false
       matrix:
         include:
           - host: ubuntu-latest
             target: x86_64-unknown-linux-gnu
-          - host: windows-latest
-            target: x86_64-pc-windows-msvc
-          - host: windows-latest
-            target: x86_64-pc-windows-gnu
-          - host: windows-11-arm
-            target: aarch64-pc-windows-msvc
-          - host: macos-14
-            target: aarch64-apple-darwin
-          - host: macos-latest
-            target: x86_64-apple-darwin
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           submodules: recursive
 
+      - name: Install Clang and LLVM
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y clang-19 llvm-19
+          echo "/usr/lib/llvm-19/bin" >> "$GITHUB_PATH"
+
       - uses: dtolnay/rust-toolchain@02cb101ec7c40f2c49e1d9714d64511d8e1b74de # 1.0-6d653ac
         with:
           toolchain: stable
-          target: ${{ matrix.target }}
-          components: clippy, rustfmt
-
-      - uses: taiki-e/setup-cross-toolchain-action@12b7ad4acfa95a1476779d6c06699b96ec1691f8 # v1.42.0
-        with:
-          target: ${{ matrix.target }}
+          targets: ${{ matrix.target }}, riscv64imac-unknown-none-elf
 
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
         with:
-          workspaces: "./bindings/rust"
-          cache-on-failure: true
+          workspaces: |
+            .
+            ckb-tests
 
-      - name: Build and Test
-        working-directory: bindings/rust
-        run: cargo test --target ${{ matrix.target }} --features generate-bindings
-      - name: Check that bindings are up to date
-        run: git diff --exit-code bindings/rust/src/bindings/generated.rs
+      - name: Install ckb-debugger
+        run: |
+          curl --fail --location --retry 3 \
+            https://github.com/nervosnetwork/ckb-standalone-debugger/releases/download/v1.1.1/ckb-debugger_v1.1.1_x86_64-unknown-linux-gnu.tar.gz \
+            --output "$RUNNER_TEMP/ckb-debugger.tar.gz"
+          mkdir -p "$RUNNER_TEMP/ckb-debugger"
+          tar -xzf "$RUNNER_TEMP/ckb-debugger.tar.gz" -C "$RUNNER_TEMP/ckb-debugger"
+          install -m 755 "$RUNNER_TEMP/ckb-debugger/ckb-debugger" "$HOME/.cargo/bin/ckb-debugger"
+          ckb-debugger --version
 
-  clippy:
-    name: clippy
-    runs-on: ubuntu-latest
-    timeout-minutes: 30
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          submodules: recursive
-      - uses: dtolnay/rust-toolchain@02cb101ec7c40f2c49e1d9714d64511d8e1b74de # 1.0-6d653ac
-        with:
-          toolchain: stable
-          components: clippy, rustfmt
-      - run: cargo clippy --workspace --all-targets --all-features
-        env:
-          RUSTFLAGS: -Dwarnings
+      - name: Test Rust bindings
+        run: cargo test --locked
 
-  fmt:
-    name: fmt
-    runs-on: ubuntu-latest
-    timeout-minutes: 30
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - uses: dtolnay/rust-toolchain@02cb101ec7c40f2c49e1d9714d64511d8e1b74de # 1.0-6d653ac
-        with:
-          toolchain: stable
-          components: rustfmt
-      - run: cargo fmt --all --check
+      - name: Test blob-tree
+        run: cargo test --manifest-path blob-tree/Cargo.toml --locked
+
+      - name: Test blob-tree verification-only
+        run: cargo test --manifest-path blob-tree/Cargo.toml --locked --no-default-features --features verification-only
+
+      - name: Test on CKB-VM
+        run: make ckb-test

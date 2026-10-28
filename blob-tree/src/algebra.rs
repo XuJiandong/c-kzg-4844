@@ -57,6 +57,7 @@ impl F {
         }
         Ok(out)
     }
+    #[cfg(any(feature = "prover", test))]
     pub fn pow(self, mut n: usize) -> Self {
         let (mut base, mut out) = (self, Self::one());
         while n > 0 {
@@ -68,6 +69,7 @@ impl F {
         }
         out
     }
+    #[cfg(any(feature = "prover", test))]
     pub fn omega() -> Self {
         // 7^((r-1)/4096), in ordinary (not Montgomery) little-endian limbs.
         Self::from_limbs([
@@ -99,8 +101,123 @@ field_op!(Mul, mul, blst_fr_mul);
 pub(crate) fn bit_reverse(i: usize) -> usize {
     i.reverse_bits() >> (usize::BITS - 12)
 }
+
+// omega^(2^k), k = 0..12, precomputed in BLST's Montgomery representation.
+// Each entry is (7^(((r - 1) / 4096) * 2^k) * 2^256) mod r, stored
+// as four least-significant-first u64 limbs. The 384-byte table is embedded
+// in the binary, so point() needs neither runtime squaring nor conversion.
+const OMEGA_POWERS: [F; 12] = [
+    F(blst_fr {
+        l: [
+            0xf2df262c09458a39,
+            0x048cdf5b99dff177,
+            0x16857bc5c7cce57b,
+            0x043b3dbca4a915ae,
+        ],
+    }),
+    F(blst_fr {
+        l: [
+            0xf4a46fbb8dc619e5,
+            0x82fa97dcb8e77487,
+            0xaf909c5bf198f018,
+            0x00edba7d83a038fa,
+        ],
+    }),
+    F(blst_fr {
+        l: [
+            0xa4a6e37a36d7822a,
+            0xfc83a2ce8787e5f1,
+            0xe89553dae7ea8f80,
+            0x6f6d38bb2a92ff1a,
+        ],
+    }),
+    F(blst_fr {
+        l: [
+            0x1ff70724b651888b,
+            0xcd8166cbe56a5af4,
+            0xe4a992a398e1e256,
+            0x5705ea3686fd3b03,
+        ],
+    }),
+    F(blst_fr {
+        l: [
+            0xb4b87dd6a9d4956c,
+            0x6a51d0bcd1482f03,
+            0x7e8146f7e0dbcb1e,
+            0x21f4b238cccb85ae,
+        ],
+    }),
+    F(blst_fr {
+        l: [
+            0xdaf6401c4aed2336,
+            0xa14c0cba41de4f6a,
+            0xdfdc7d04fc7f2e5b,
+            0x6f61ff4e296cff18,
+        ],
+    }),
+    F(blst_fr {
+        l: [
+            0xbcf7e31ae8d6f162,
+            0x15d1c587662fc7a4,
+            0xb7ed5ecd71278a57,
+            0x329d0d9340ccecb3,
+        ],
+    }),
+    F(blst_fr {
+        l: [
+            0x30c78850dd04d52f,
+            0xe27f8794adaddbcb,
+            0x0a59f321ae22c531,
+            0x1958b127ba7f8ca3,
+        ],
+    }),
+    F(blst_fr {
+        l: [
+            0x1acf64e488202b65,
+            0x5b18b637819f004f,
+            0xee649cab3107fdf5,
+            0x27a8543dce9012a0,
+        ],
+    }),
+    F(blst_fr {
+        l: [
+            0x6ecf49952c42eff8,
+            0x6ec1fa834d5dfa57,
+            0x3ff5cf385656b15c,
+            0x54b80267229e031b,
+        ],
+    }),
+    F(blst_fr {
+        l: [
+            0xf3b05674aa89cfb1,
+            0x072f01406006b9fe,
+            0xce9a0dbf25667a26,
+            0x4d2ce4052d598374,
+        ],
+    }),
+    F(blst_fr {
+        l: [
+            0xfffffffd00000003,
+            0xfb38ec08fffb13fc,
+            0x99ad88181ce5880f,
+            0x5bc8f5f97cd877d8,
+        ],
+    }),
+];
+
 pub(crate) fn point(i: usize) -> F {
-    F::omega().pow(bit_reverse(i))
+    let mut exponent = bit_reverse(i);
+    if exponent == 0 {
+        return F::one();
+    }
+    // Start with the first selected power to avoid multiplying by one.
+    let mut out = OMEGA_POWERS[exponent.trailing_zeros() as usize];
+    exponent &= exponent - 1;
+    while exponent != 0 {
+        out = out * OMEGA_POWERS[exponent.trailing_zeros() as usize];
+        exponent &= exponent - 1;
+    }
+    out
 }
 
 /// In-place radix-2 FFT. Input and output are in natural order.
@@ -169,9 +286,14 @@ pub(crate) fn add_scaled(out: &mut [F], poly: &[F], scale: F) {
 }
 /// Newton interpolation, plus the monic vanishing polynomial. Points must be distinct.
 pub(crate) fn interpolate(points: &[(F, F)]) -> Result<(Vec<F>, Vec<F>)> {
+    let Some((&(x, y), rest)) = points.split_first() else {
+        return Ok((Vec::new(), vec![F::one()]));
+    };
+    // For the first point I(X) = y and Z(X) = X - x; no inversion is needed.
     let mut interpolation = vec![F::zero(); points.len()];
-    let mut vanishing = vec![F::one()];
-    for &(x, y) in points {
+    interpolation[0] = y;
+    let mut vanishing = vec![F::zero() - x, F::one()];
+    for &(x, y) in rest {
         let delta = (y - eval(&interpolation, x)) * eval(&vanishing, x).inv()?;
         add_scaled(&mut interpolation, &vanishing, delta);
         let mut next = vec![F::zero(); vanishing.len() + 1];
@@ -237,6 +359,12 @@ impl G {
         }
         out
     }
+    pub fn neg(mut self) -> Self {
+        unsafe {
+            blst_p1_cneg(&mut self.0, true);
+        }
+        self
+    }
     pub fn scale(self, scalar: F) -> Self {
         let mut bytes = scalar.bytes();
         bytes.reverse();
@@ -248,9 +376,60 @@ impl G {
     }
 }
 
-#[cfg(all(test, feature = "prover"))]
+#[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn cached_domain_points_match_exponentiation() {
+        let omega = F::omega();
+        for (k, &power) in OMEGA_POWERS.iter().enumerate() {
+            assert_eq!(power, omega.pow(1 << k), "power {k}");
+        }
+        for i in 0..crate::WIDTH {
+            assert_eq!(point(i), omega.pow(bit_reverse(i)), "point {i}");
+        }
+    }
+
+    #[test]
+    fn negation_matches_scalar_multiplication() {
+        let commitment = include_bytes!("../tests/fixtures/single.bin")[..48]
+            .try_into()
+            .unwrap();
+        let point = G::decode(commitment).unwrap();
+        for p in [G::default(), point, point.scale(F::from_u64(7))] {
+            assert_eq!(p.neg().bytes(), p.scale(F::zero() - F::one()).bytes());
+            assert_eq!(p.neg().neg().bytes(), p.bytes());
+            assert_eq!(p.add(p.neg()).bytes(), G::default().bytes());
+        }
+    }
+
+    #[test]
+    fn interpolation_handles_empty_singleton_and_multiple_points() {
+        assert_eq!(interpolate(&[]).unwrap(), (vec![], vec![F::one()]));
+        for count in 1..=5 {
+            let poly = (1..=count).map(F::from_u64).collect::<Vec<_>>();
+            let points = (0..count)
+                .map(|i| {
+                    let x = F::from_u64(i);
+                    (x, eval(&poly, x))
+                })
+                .collect::<Vec<_>>();
+            let (interpolation, vanishing) = interpolate(&points).unwrap();
+            assert_eq!(interpolation, poly);
+            for i in 0..=count {
+                let x = F::from_u64(i);
+                let expected = points.iter().fold(F::one(), |v, (root, _)| v * (x - *root));
+                assert_eq!(eval(&vanishing, x), expected);
+            }
+            assert_eq!(
+                interpolate(&[points[0], points[0]]),
+                Err(Error::DegenerateChallenge)
+            );
+        }
+    }
+
+    #[cfg(feature = "prover")]
     #[test]
     fn field_domain_fft_and_ckzg_agree() {
         let r = [
@@ -276,6 +455,7 @@ mod tests {
         }
         assert!(F::zero().inv().is_err());
     }
+    #[cfg(feature = "prover")]
     #[test]
     fn interpolation_division_and_subgroup_validation() {
         let poly = vec![F::from_u64(3), F::from_u64(5), F::from_u64(7)];

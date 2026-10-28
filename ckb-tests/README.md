@@ -5,7 +5,7 @@ The root crate's `verification-only` feature exposes a `KzgVerifier` with point,
 ## Build and run
 
 Prerequisites: Rust with `riscv64imac-unknown-none-elf` installed, Clang >= 19
-with a RISC-V backend, LLVM's `llvm-ar`, and the already installed
+with a RISC-V backend, LLVM's `llvm-ar`, Python 3, and the already installed
 `ckb-debugger`.
 
 From the repository root:
@@ -29,6 +29,41 @@ together with `make blob-tree-test`. The shared blob-tree cases
 cover an empty leaf, queries across two children, wire decoding, changed
 values/roots/commitments, invalid indices, and malformed or non-subgroup points.
 Fixture regeneration is documented in [blob-tree](../blob-tree/README.md).
+
+`run.py` reads the fixtures on the host and passes hex-encoded data after
+`ckb-debugger --` to `ckb_std::env::argv()`. Neither VM binary embeds test
+fixtures, and there is no fixture build script. The KZG verification key is
+also supplied at runtime; blob-tree retains its library's pinned Ethereum key.
+Hex is split into 32 KiB arguments so blobs fit the host's per-argument limit.
+
+Select other inputs without recompiling the binaries:
+
+```sh
+make -C ckb-tests test-kzg CASE=point \
+  KZG_ARGS="--point-vector ../tests/verify_kzg_proof/kzg-mainnet/verify_kzg_proof_case_correct_proof_5_0/data.yaml"
+make -C ckb-tests test-blob-tree BLOB_TREE_FIXTURES="/path/to/proof.bin"
+```
+
+`KZG_ARGS` also accepts `--blob-vector /path/to/data.yaml` and
+`--g2-key /path/to/key.bin` (96 raw bytes). Reference vectors must use the
+verifier API's fixed field sizes; their YAML `output` selects the expected
+result (`true`, `false`, or `null` for bad arguments). Blob-tree fixtures use
+the format written by `generate-fixtures` and must contain valid proofs;
+the shared suite derives adversarial cases from each supplied proof.
+
+For direct debugger calls, the KZG binary accepts
+`-- <key|point|blob|batch> <true|false|bad-arguments|mismatch-length> <hex chunks...>`.
+Concatenated decoded chunks contain a 96-byte G2 key followed by:
+
+- `key`: no further data; checks construction of the verifier.
+- `point`: commitment (48 bytes), z (32), y (32), proof (48).
+- `blob`: blob (131072 bytes), commitment (48), proof (48).
+- `batch`: three independently counted arrays of blobs, commitments, and
+  proofs. Each array starts with a big-endian u64 count, followed by its
+  fixed-size elements. Counts and contents are supplied by the caller.
+
+The blob-tree binary accepts `-- <fixture hex chunks...>`. Cycle measurements
+exclude argument decoding, and KZG measurements also exclude key setup.
 
 If Clang on your PATH lacks a RISC-V backend, pass the LLVM compiler and
 archiver explicitly, for example:

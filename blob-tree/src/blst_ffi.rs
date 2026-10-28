@@ -50,6 +50,7 @@ extern "C" {
     pub fn blst_p1_in_g1(p: *const blst_p1) -> bool;
     pub fn blst_p1_compress(out: *mut u8, in_: *const blst_p1);
     pub fn blst_p1_add_or_double(out: *mut blst_p1, a: *const blst_p1, b: *const blst_p1);
+    pub fn blst_p1_cneg(p: *mut blst_p1, cbit: bool);
     pub fn blst_p1_mult(out: *mut blst_p1, p: *const blst_p1, scalar: *const u8, nbits: usize);
 }
 

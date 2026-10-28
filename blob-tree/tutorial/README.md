@@ -120,13 +120,9 @@ $W$ is the second additional 48-byte point. The verifier calls c-kzg's `verify_k
 
 The order is $T \to \rho \to D \to z \to W$. This static tutorial explains the structure and proof size.
 
-## 3. Further proof size optimization
+## 3. Proof size optimization
 
 The implementation now encodes the query count and each absolute index as an unsigned base-128 [varint](https://protobuf.dev/programming-guides/encoding/#base-128-varints), without protobuf field tags. Each byte carries seven data bits, least-significant group first; the high bit indicates another byte follows. Values below 128 take one byte, below 16,384 take two, below 2,097,152 take three, and the remaining supported values take four.
-
-For `[0, 7, 4096, 4097]`, the count and indices encode as `04 00 07 80 20 81 20`: seven bytes instead of 20 with fixed u32 fields or 40 with the previous u64 implementation. The complete proof is 199 bytes, down from 232 bytes in that implementation. The table above gives actual varint sizes for its concrete examples.
-
-The decoder rejects nonminimal encodings, truncated or overlong varints, invalid counts and indices, malformed points, and trailing bytes. Counts are bounded by the trusted root length and available input before allocating. The transcript continues to use u64 big-endian integers, so roots, commitments, and cryptographic challenges are unchanged. This changes the proof wire format: previously serialized u64 proofs must be regenerated or decoded with the old implementation and re-encoded.
 
 ## 4. Support non-membership
 We require all elements in the tree to be ordered and unique. In a sorted tree, prove that a value $e$ is absent by authenticating its two adjacent neighbors:

@@ -253,14 +253,17 @@ impl Tree {
             .collect::<Vec<_>>();
         let mut q = vec![F::zero(); WIDTH];
         let mut power = F::one();
+        let mut interpolations = Vec::with_capacity(statements.len());
         for (poly, statement) in polys.iter().zip(&statements) {
             let (interpolation, vanishing) = interpolate(&statement.points)?;
             add_scaled(&mut q, &quotient(poly, &interpolation, &vanishing)?, power);
+            // Reuse these polynomials once the quotient commitment fixes the challenge.
+            interpolations.push((interpolation, vanishing));
             power = power * rho;
         }
         let quotient = commit(&q)?;
         let z = challenge(&transcript, &quotient, &statements)?;
-        let (weights, y) = weights(&statements, rho, z)?;
+        let (weights, y) = weights_from_polynomials(interpolations.into_iter().map(Ok), rho, z)?;
         let mut combined = vec![F::zero(); WIDTH];
         for (poly, weight) in polys.iter().zip(weights) {
             add_scaled(&mut combined, poly, weight);
@@ -395,11 +398,18 @@ fn challenge(t: &[u8], quotient: &Commitment, statements: &[Statement]) -> Resul
     )
 }
 fn weights(statements: &[Statement], rho: F, z: F) -> Result<(Vec<F>, F)> {
+    weights_from_polynomials(statements.iter().map(|s| interpolate(&s.points)), rho, z)
+}
+fn weights_from_polynomials(
+    polynomials: impl Iterator<Item = Result<(Vec<F>, Vec<F>)>>,
+    rho: F,
+    z: F,
+) -> Result<(Vec<F>, F)> {
     let mut weights = Vec::new();
     let mut y = F::zero();
     let mut power = F::one();
-    for statement in statements {
-        let (interpolation, vanishing) = interpolate(&statement.points)?;
+    for polynomials in polynomials {
+        let (interpolation, vanishing) = polynomials?;
         // Challenge derivation excludes queried points; keep inversion checked as well.
         let weight = power * eval(&vanishing, z).inv()?;
         y = y + weight * eval(&interpolation, z);

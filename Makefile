@@ -58,3 +58,10 @@ ckb-build:
 
 ckb-test:
 	$(MAKE) -C ckb-tests test
+
+.PHONY: blob-tree-test
+blob-tree-test:
+	cargo test --manifest-path blob-tree/Cargo.toml --locked
+	cargo test --manifest-path blob-tree/Cargo.toml --locked --no-default-features --features verification-only
+	cargo run --manifest-path blob-tree/Cargo.toml --locked --example basic
+	$(MAKE) -C ckb-tests test-blob-tree

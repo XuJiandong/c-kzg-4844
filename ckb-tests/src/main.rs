@@ -19,8 +19,9 @@ static NONZERO_BLOB: [u8; BYTES_PER_BLOB] = *fixture!("blob_blob");
 
 fn main() -> i8 {
     ckb_std::logger::init().expect("logger");
+    // ckb-debugger forwards arguments after `--` directly, without argv[0].
     let mode = ckb_std::env::argv()
-        .get(1)
+        .first()
         .map(|x| x.to_bytes())
         .unwrap_or(b"all");
     log::info!("EIP-4844 verification tests start");

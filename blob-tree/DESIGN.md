@@ -46,7 +46,7 @@ All vector, child, and slot indices are zero-based. Queries are nonempty, strict
 
 The index $i$ is local to its context: in the tree layout it denotes an element index; in the reduction it denotes an opening statement numbered $0, \ldots, m$. A layout commitment $C_j$ refers to child $j$, whereas reduction commitment $C_0$ is $R$. Sums over opening statements include the top level and all $m$ queried children.
 
-Arithmetic on field elements is modulo $r$; division means multiplication by a nonzero field inverse. `||` denotes byte concatenation. In the proposed compact proof wire format, query counts and indices are unsigned 32-bit big-endian values; transcript integers and hash input lengths remain unsigned 64-bit big-endian values. G1 points use canonical 48-byte compressed encodings; sizes marked `B` in size tables mean bytes, whereas the standalone symbol $B$ in formulas denotes the blob width. Proof sizes include query indices and their count, and exclude the public root and original values.
+Arithmetic on field elements is modulo $r$; division means multiplication by a nonzero field inverse. `||` denotes byte concatenation. In the proof wire format, query counts and absolute indices are canonical unsigned base-128 varints (least-significant seven-bit group first, no protobuf field tags); transcript integers and hash input lengths remain unsigned 64-bit big-endian values. G1 points use canonical 48-byte compressed encodings; sizes marked `B` in size tables mean bytes, whereas the standalone symbol $B$ in formulas denotes the blob width. Proof sizes include query indices and their count, and exclude the public root and original values.
 
 ## 2. Data structure and semantics
 
@@ -123,14 +123,14 @@ This is **one equation with two pairing terms**, not a single pairing. The repos
 
 ## 4. Proof size and computational cost
 
-With 4-byte query counts and indices, a proof for $k$ queries spanning $m$ children is $4 + 4k + 48m + 96$ **bytes** in canonical compressed form. Queries within one child share its commitment; each element adds a 4-byte index but no individual opening witness. Both the maximum count $4096^2$ and the maximum index $4096^2-1$ fit in an unsigned 32-bit integer.
+A proof for $k$ queries at indices $i_j$ spanning $m$ children is $v(k) + \sum_{j=0}^{k-1} v(i_j) + 48m + 96$ **bytes** in canonical compressed form, where $v(x)$ is the unsigned base-128 varint length, with $v(0)=1$. Write $S=\sum_j v(i_j)$ below. Queries within one child share its commitment; each element adds a one- to four-byte index but no individual opening witness. Both the maximum count $4096^2$ and the maximum index $4096^2-1$ need at most four bytes, so $4 + 4k + 48m + 96$ is an upper bound.
 
 | Query distribution | $m$ | Proof size | Verification pairing terms |
 |---|---:|---:|---:|
-| One element | 1 | 152 B | 2 |
-| All 4096 elements of one child | 1 | 16532 B | 2 |
-| $k$ queries spanning two children | 2 | $196 + 4k$ B | 2 |
-| $k$ queries spanning all 4096 children | 4096 | $196708 + 4k$ B | 2 |
+| One element at index 7 | 1 | 146 B | 2 |
+| All 4096 elements of child 0 | 1 | 8210 B | 2 |
+| $k$ queries spanning two children | 2 | $192 + v(k) + S$ B | 2 |
+| $k$ queries spanning all 4096 children | 4096 | $196704 + v(k) + S$ B | 2 |
 
 These sizes include the index count and indices, and exclude the public root and original elements. The original elements are part of the statement being verified; they are not implicitly hidden or transmitted for free. This construction makes no claim of globally optimal proof size. It favors a readable two-point reduction that avoids individual opening witnesses. Child commitments still grow with $m$ because the top-level hashes require their bytes.
 
@@ -155,7 +155,7 @@ If $\rho = 0$, retry `hash_field("rho", [T, nonce_be])`. If $z$ equals any queri
 
 Prover and verifier run the same retries; no nonce is sent and proof sizes stay unchanged. The initial attempt keeps the original hash encoding. Counter exhaustion returns `DegenerateChallenge` without wrapping. SHA-256 reduction is biased: before rejection, each field element has probability less than $3/2^{256}$. Security analysis must account for the accepted challenge sets.
 
-Queries must be nonempty, strictly increasing, unique, and in range. The child list is derived from the indices in the proof, and its commitment count must match exactly. The proposed wire format is `k || index_0 || ... || index_(k-1) || C_child_0 || ... || C_child_(m-1) || D || W`, using u32 big-endian counts and indices and 48-byte compressed points. Its length is $4 + 4k + 48m + 96$; trailing bytes are rejected. The transcript encoding above remains u64 big-endian. The current Rust `Proof::to_bytes` and `Proof::from_bytes` still use u64 for these wire fields, so the 4-byte sizes describe the proposed format rather than their current output. A decoder for the proposed format must bound the query count before allocation and validate decoded indices against the root. All input G1 points undergo decompression, subgroup checks, and re-encoding checks before arithmetic. The point at infinity is valid because zero polynomials can legitimately produce zero commitments and witnesses.
+Queries must be nonempty, strictly increasing, unique, and in range. The child list is derived from the indices in the proof, and its commitment count must match exactly. The wire format is `k || index_0 || ... || index_(k-1) || C_child_0 || ... || C_child_(m-1) || D || W`, using minimal unsigned base-128 varints for counts and indices and 48-byte compressed points. Its length is $v(k) + \sum_j v(i_j) + 48m + 96$; trailing bytes are rejected. Varints longer than four bytes, redundant high zero groups, and truncated encodings are rejected. The decoder bounds the query count by the trusted root length and the available input before allocation, then validates decoded indices against the root. The transcript encoding above remains u64 big-endian. This replaces the previous Rust u64 proof wire format; existing serialized proofs must be regenerated or decoded with the old implementation and re-encoded. All input G1 points undergo decompression, subgroup checks, and re-encoding checks before arithmetic. The point at infinity is valid because zero polynomials can legitimately produce zero commitments and witnesses.
 
 ## 6. Why aggregation prevents simple forgeries
 

@@ -50,8 +50,33 @@ pub fn run<'a>(
         let mut trailing = encoded.clone();
         trailing.push(0);
         assert!(Proof::from_bytes(&root, &trailing).is_err());
+        // Both fixtures have a one-byte count and first index. Reject redundant
+        // groups, truncated/unterminated varints, overflow, and excessive counts
+        // in the same decoder on the host and CKB-VM.
+        for prefix in [
+            vec![encoded[0] | 0x80, 0],
+            vec![0],
+            vec![0x81, 0x80, 0x80, 0x08],       // CAPACITY + 1
+            vec![0xff, 0xff, 0xff, 0xff, 0x0f], // u32::MAX
+        ] {
+            let mut malformed = prefix;
+            malformed.extend_from_slice(&encoded[1..]);
+            assert!(Proof::from_bytes(&root, &malformed).is_err());
+        }
+        for index in [
+            vec![0x80, 0], // Nonminimal zero.
+            vec![0xff, 0xff, 0xff, 0xff, 0x7f],
+        ] {
+            let mut malformed = vec![encoded[0]];
+            malformed.extend_from_slice(&index);
+            malformed.extend_from_slice(&encoded[2..]);
+            assert!(Proof::from_bytes(&root, &malformed).is_err());
+        }
+        for malformed in [&[0x80][..], &[0x80, 0x80, 0x80, 0x80]] {
+            assert!(Proof::from_bytes(&root, malformed).is_err());
+        }
         let mut oversized = encoded;
-        oversized[..8].copy_from_slice(&u64::MAX.to_be_bytes());
+        oversized[..4].copy_from_slice(&[0xff; 4]);
         assert!(Proof::from_bytes(&root, &oversized).is_err());
 
         let mut changed = values.clone();

@@ -9,19 +9,18 @@ fn single_empty_value_and_wire_roundtrip() {
     let tree = Tree::new(&[vec![]]).unwrap();
     let (values, proof) = tree.prove(&[0]).unwrap();
     assert!(verify(tree.root(), &values, &proof).unwrap());
-    assert_eq!(proof.to_bytes().len(), 8 + 8 * proof.indices.len() + 144);
+    assert_eq!(proof.to_bytes().len(), 146);
     assert_eq!(
         Proof::from_bytes(tree.root(), &proof.to_bytes()).unwrap(),
         proof
     );
     let bytes = proof.to_bytes();
-    assert_eq!(&bytes[..8], &1u64.to_be_bytes());
-    assert_eq!(&bytes[8..16], &0u64.to_be_bytes());
+    assert_eq!(&bytes[..2], &[1, 0]);
     for len in 0..bytes.len() {
         assert!(Proof::from_bytes(tree.root(), &bytes[..len]).is_err());
     }
     let mut oversized = bytes.clone();
-    oversized[..8].copy_from_slice(&u64::MAX.to_be_bytes());
+    oversized[..4].copy_from_slice(&[0xff; 4]);
     assert!(Proof::from_bytes(tree.root(), &oversized).is_err());
     let mut bytes = bytes;
     bytes.push(0);
@@ -54,7 +53,7 @@ fn multirow_and_adversarial_changes() {
     extra.push(vec![]);
     rejected(tree.root(), &extra, &proof);
     assert_eq!(proof.children.len(), 2);
-    assert_eq!(proof.to_bytes().len(), 8 + 8 * proof.indices.len() + 192);
+    assert_eq!(proof.to_bytes().len(), 202);
     assert!(verify(tree.root(), &values, &proof).unwrap());
     let mut bad = values.clone();
     bad[0].push(1);
@@ -118,7 +117,7 @@ fn full_child_opening() {
     .unwrap();
     let indices = (0..WIDTH).collect::<Vec<_>>();
     let (values, proof) = tree.prove(&indices).unwrap();
-    assert_eq!(proof.to_bytes().len(), 8 + 8 * proof.indices.len() + 144);
+    assert_eq!(proof.to_bytes().len(), 8210);
     assert!(verify(tree.root(), &values, &proof).unwrap());
     let mut bad = values;
     bad[WIDTH - 1] = b"changed".to_vec();

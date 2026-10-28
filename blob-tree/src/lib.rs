@@ -73,13 +73,14 @@ pub struct Proof {
     pub opening: Commitment,
 }
 impl Proof {
-    /// Canonical wire format: u64 count || u64 indices || children || quotient || opening.
-    /// Integers are big-endian; child commitments are inferred from the indices.
+    /// Canonical wire format: varint count || varint indices || children || quotient || opening.
+    /// Integers use minimal unsigned base-128 varints (no protobuf tags).
+    /// Child commitments are inferred from the indices. Legacy u64 encoding is unsupported.
     pub fn to_bytes(&self) -> Vec<u8> {
         let mut bytes = Vec::new();
-        bytes.extend_from_slice(&(self.indices.len() as u64).to_be_bytes());
+        write_varint(&mut bytes, self.indices.len());
         for &index in &self.indices {
-            bytes.extend_from_slice(&(index as u64).to_be_bytes());
+            write_varint(&mut bytes, index);
         }
         for point in self.children.iter().chain([&self.quotient, &self.opening]) {
             bytes.extend_from_slice(point);
@@ -87,28 +88,27 @@ impl Proof {
         bytes
     }
     /// Decode indices and points, rejecting malformed queries and noncanonical encodings.
-    pub fn from_bytes(root: &Root, bytes: &[u8]) -> Result<Self> {
-        let read_usize = |bytes: &[u8]| {
-            usize::try_from(u64::from_be_bytes(bytes.try_into().unwrap()))
-                .map_err(|_| Error::InvalidProofShape)
-        };
-        let count = read_usize(bytes.get(..8).ok_or(Error::InvalidProofShape)?)?;
-        // Bound the count before allocating or computing an offset from untrusted bytes.
-        if count == 0 || count > CAPACITY {
+    pub fn from_bytes(root: &Root, mut bytes: &[u8]) -> Result<Self> {
+        if root.len == 0 || root.len > CAPACITY {
+            return Err(Error::InvalidLength);
+        }
+        let count = read_varint(&mut bytes)?;
+        // Bound the count before allocating from untrusted bytes.
+        if count == 0 || count > root.len {
             return Err(Error::InvalidQuery);
         }
-        let points_offset = 8 + 8 * count;
-        let indices = bytes
-            .get(8..points_offset)
-            .ok_or(Error::InvalidProofShape)?
-            .chunks_exact(8)
-            .map(read_usize)
-            .collect::<Result<Vec<_>>>()?;
-        let groups = validate(root, &indices)?;
-        if bytes.len() != points_offset + 48 * (groups.len() + 2) {
+        // Every index needs at least one byte, followed by at least three points.
+        if bytes.len() < count + 3 * 48 {
             return Err(Error::InvalidProofShape);
         }
-        let mut points = bytes[points_offset..]
+        let indices = (0..count)
+            .map(|_| read_varint(&mut bytes))
+            .collect::<Result<Vec<_>>>()?;
+        let groups = validate(root, &indices)?;
+        if bytes.len() != 48 * (groups.len() + 2) {
+            return Err(Error::InvalidProofShape);
+        }
+        let mut points = bytes
             .chunks_exact(48)
             .map(|c| c.try_into().unwrap())
             .collect::<Vec<Commitment>>();
@@ -124,6 +124,32 @@ impl Proof {
             opening,
         })
     }
+}
+
+fn write_varint(bytes: &mut Vec<u8>, mut value: usize) {
+    while value >= 0x80 {
+        bytes.push((value as u8 & 0x7f) | 0x80);
+        value >>= 7;
+    }
+    bytes.push(value as u8);
+}
+
+fn read_varint(bytes: &mut &[u8]) -> Result<usize> {
+    let mut value = 0;
+    // Counts and indices are at most CAPACITY (2^24), so four bytes suffice.
+    // This bound also prevents integer overflow and unbounded continuation runs.
+    for shift in (0..28).step_by(7) {
+        let (&byte, rest) = bytes.split_first().ok_or(Error::InvalidProofShape)?;
+        *bytes = rest;
+        value |= usize::from(byte & 0x7f) << shift;
+        if byte & 0x80 == 0 {
+            if shift != 0 && byte == 0 {
+                return Err(Error::InvalidProofShape);
+            }
+            return Ok(value);
+        }
+    }
+    Err(Error::InvalidProofShape)
 }
 
 /// Immutable PoC tree. Stores polynomial coefficients for straightforward proving.

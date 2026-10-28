@@ -18,29 +18,29 @@ The root is constructed from the bottom up. Lines show dependencies; the diagram
 
 Share child commitments, then combine the openings.
 
-A proof includes a 4-byte query count and a 4-byte index per queried element, then one commitment for each queried child, followed by two points: the aggregate quotient commitment $D$ and the opening witness $W$. Each point occupies 48 bytes. Four-byte unsigned integers cover both the maximum query count of $2^{24}$ and all indices from $0$ to $2^{24}-1$.
+A proof includes a varint query count and a varint index per queried element, then one commitment for each queried child, followed by two points: the aggregate quotient commitment $D$ and the opening witness $W$. Each point occupies 48 bytes. Counts and indices use canonical unsigned base-128 varints, taking one to four bytes over the supported range. The maximum query count is $2^{24}$, and indices range from $0$ to $2^{24}-1$.
 
 For queries `[0, 7, 4096, 4097]`, child 0 supplies columns 0 and 7, while child 1 supplies columns 0 and 1. The four queries share two child commitments.
 
 | Queried elements $k$ | Queried children $m$ | Proof bytes | Pairing terms |
 | ---: | ---: | ---: | ---: |
-| 4 | 2 | 212 | 2 |
+| 4 | 2 | 199 | 2 |
 
-![The 212-byte proof: 20 bytes of count and indices, 96 bytes of child commitments, and 96 bytes for D and W.](assets/proof-layout.svg)
+![The 199-byte proof: 7 bytes of count and indices, 96 bytes of child commitments, and 96 bytes for D and W.](assets/proof-layout.svg)
 
 ## Proof sizes
 
 | Queries | Children m | Proof bytes |
 | --- | --- | --- |
-| One element: [7] | 1 | 152 |
-| Four elements in one child: [0, 7, 77, 4095] | 1 | 164 |
-| Two children: [0, 7, 4096, 4097] | 2 | 212 |
-| Four children: [0, 4096, 8192, 16777215] | 4 | 308 |
-| At least one element in every child | 4096 | 196708 + 4k |
+| One element: [7] | 1 | 146 |
+| Four elements in one child: [0, 7, 77, 4095] | 1 | 150 |
+| Two children: [0, 7, 4096, 4097] | 2 | 199 |
+| Four children: [0, 4096, 8192, 16777215] | 4 | 298 |
+| At least one element in every child | 4096 | At most 196708 + 4k |
 
-$\text{Proof size} = 4 + 4 k + 48 m + 96$ bytes, including query indices and their count but excluding the public root and original elements. Each example assumes the vector is long enough to contain every queried index. Verification always uses two pairing terms.
+$\text{Proof size} = v(k) + \sum_{j=0}^{k-1} v(i_j) + 48 m + 96$ bytes, where $v(x)$ is the number of bytes in the unsigned varint encoding of $x$ (including one byte for zero). This includes query indices and their count but excludes the public root and original elements. Since each varint takes at most four bytes, $4 + 4k + 48m + 96$ remains an upper bound. Each example assumes the vector is long enough to contain every queried index. Verification always uses two pairing terms.
 
-Consider the scenario where many elements must be proven. The `48m` term accounts for most of the proof size and can be estimated from the number of queried children. The worst case occurs when every child is in use. Since the number of children is about n/4096, where n is the total element count, the `48m` term is about n/85. For n = 100,000 and n = 1,000,000, this gives roughly 1.18K and 11.8K respectively. Even at its maximum size, the proof stays modest (196708 + 4k bytes), so it can still fit in CKB transactions.
+Consider the scenario where many elements must be proven. The `48m` term accounts for the child commitments and can be estimated from the number of queried children. The worst case occurs when every child is in use. Since the number of children is about n/4096, where n is the total element count, the `48m` term is about n/85. For n = 100,000 and n = 1,000,000, this gives roughly 1.18K and 11.8K respectively. With every child queried, the proof is at most 196708 + 4k bytes; whether it fits in a CKB transaction also depends on the query count and the separately supplied elements.
 
 Compared with the [SMT](https://github.com/nervosnetwork/sparse-merkle-tree) below, the reduction is significant:
 | total elements | elements to be proven | Proof size (B) |
@@ -52,7 +52,7 @@ Compared with the [SMT](https://github.com/nervosnetwork/sparse-merkle-tree) bel
 
 This proof size problem is why we seek a new tree structure rather than relying on the existing SMT.
 
-Note: the `4k` term can be smaller; see below.
+The count and index savings depend on their values; see the encoding details below.
 
 ### The complete reduction, step by step
 
@@ -122,7 +122,11 @@ The order is $T \to \rho \to D \to z \to W$. This static tutorial explains the s
 
 ## 3. Further proof size optimization
 
-The integers in this tutorial can be encoded more compactly. Encoding them as protobuf [varint](https://protobuf.dev/programming-guides/encoding/) would make the proof substantially smaller. The proof sizes here are therefore upper bounds, and an actual implementation will be considerably smaller.
+The implementation now encodes the query count and each absolute index as an unsigned base-128 [varint](https://protobuf.dev/programming-guides/encoding/#base-128-varints), without protobuf field tags. Each byte carries seven data bits, least-significant group first; the high bit indicates another byte follows. Values below 128 take one byte, below 16,384 take two, below 2,097,152 take three, and the remaining supported values take four.
+
+For `[0, 7, 4096, 4097]`, the count and indices encode as `04 00 07 80 20 81 20`: seven bytes instead of 20 with fixed u32 fields or 40 with the previous u64 implementation. The complete proof is 199 bytes, down from 232 bytes in that implementation. The table above gives actual varint sizes for its concrete examples.
+
+The decoder rejects nonminimal encodings, truncated or overlong varints, invalid counts and indices, malformed points, and trailing bytes. Counts are bounded by the trusted root length and available input before allocating. The transcript continues to use u64 big-endian integers, so roots, commitments, and cryptographic challenges are unchanged. This changes the proof wire format: previously serialized u64 proofs must be regenerated or decoded with the old implementation and re-encoded.
 
 ## 4. Support non-membership
 We require all elements in the tree to be ordered and unique. In a sorted tree, prove that a value $e$ is absent by authenticating its two adjacent neighbors:

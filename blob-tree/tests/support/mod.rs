@@ -4,7 +4,7 @@ extern crate alloc;
 use alloc::{vec, vec::Vec};
 use blob_tree::{verify, Error, Proof, Root, CAPACITY};
 
-fn decode(mut bytes: &[u8]) -> (Root, Vec<Vec<u8>>, Proof) {
+pub fn decode(mut bytes: &[u8]) -> (Root, Vec<Vec<u8>>, Proof) {
     fn number(bytes: &mut &[u8]) -> usize {
         let (head, tail) = bytes.split_at(8);
         *bytes = tail;
@@ -34,7 +34,7 @@ fn rejected(root: &Root, values: &[Vec<u8>], proof: &Proof) {
 }
 
 /// Check the supplied native-generated membership proofs.
-/// The callback measures only verification of each valid, decoded proof.
+/// The callback checks verification of each valid, decoded proof.
 pub fn run<'a>(
     fixtures: impl IntoIterator<Item = &'a [u8]>,
     mut check_valid: impl FnMut(&Root, &[Vec<u8>], &Proof),

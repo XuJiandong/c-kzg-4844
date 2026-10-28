@@ -37,8 +37,8 @@ The two files in `blst/src/asm`, `blst_mul_mont_384.riscv.S` and
 | --- | --- |
 | `verify_kzg_proof` | 48 M cycles |
 | `verify_blob_kzg_proof` | 91 M cycles |
-| `blob_tree::verify` (1 query, 1 child) | 80 M cycles |
-| `blob_tree::verify` (6 queries, 2 children) | 89 M cycles |
+
+Run `make blob-tree-bench` separately for the [blob-tree verification benchmarks](../blob-tree/README.md#verification-on-ckb-vm).
 
 Compared with the pure C baseline below, performance improves substantially.
 

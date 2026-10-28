@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Pass test inputs to CKB-VM through argv; no generated or embedded fixtures."""
+"""Pass test and benchmark inputs to CKB-VM through argv."""
 
 import argparse
 from pathlib import Path
@@ -108,13 +108,16 @@ def main():
     kzg_parser.add_argument("--blob-vector", type=Path, default=VECTORS / "verify_blob_kzg_proof/kzg-mainnet/verify_blob_kzg_proof_case_correct_proof_3/data.yaml")
     tree_parser = commands.add_parser("blob-tree")
     tree_parser.add_argument("--binary", type=Path, required=True)
+    tree_parser.add_argument("--benchmark", action="store_true",
+                             help="measure valid proof verification without adversarial checks")
     tree_parser.add_argument("fixtures", type=Path, nargs="+")
     args = parser.parse_args()
     if args.command == "kzg":
         kzg(args)
     else:
         for fixture in args.fixtures:
-            run(args, str(fixture), fixture.read_bytes())
+            prefix = ("--bench",) if args.benchmark else ()
+            run(args, str(fixture), fixture.read_bytes(), *prefix)
 
 
 if __name__ == "__main__":

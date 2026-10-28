@@ -290,18 +290,51 @@ pub(crate) fn interpolate(points: &[(F, F)]) -> Result<(Vec<F>, Vec<F>)> {
         return Ok((Vec::new(), vec![F::one()]));
     };
     // For the first point I(X) = y and Z(X) = X - x; no inversion is needed.
+    if rest.is_empty() {
+        return Ok((vec![y], vec![F::zero() - x, F::one()]));
+    }
     let mut interpolation = vec![F::zero(); points.len()];
     interpolation[0] = y;
-    let mut vanishing = vec![F::zero() - x, F::one()];
-    for &(x, y) in rest {
-        let delta = (y - eval(&interpolation, x)) * eval(&vanishing, x).inv()?;
-        add_scaled(&mut interpolation, &vanishing, delta);
-        let mut next = vec![F::zero(); vanishing.len() + 1];
-        for (i, c) in vanishing.iter().enumerate() {
-            next[i] = next[i] - *c * x;
-            next[i + 1] = next[i + 1] + *c;
+    let mut vanishing = vec![F::zero(); points.len() + 1];
+    // Newton's denominators depend only on the x coordinates. Batch inversion
+    // replaces n - 1 inversions with one. Use the vanishing buffer for prefix
+    // products until we start constructing Z below.
+    let mut inverses = Vec::with_capacity(rest.len());
+    for (i, &(xi, _)) in (1..).zip(rest) {
+        let denominator = points[1..i]
+            .iter()
+            .fold(xi - x, |product, &(xj, _)| product * (xi - xj));
+        if denominator == F::zero() {
+            return Err(Error::DegenerateChallenge);
         }
-        vanishing = next;
+        inverses.push(denominator);
+        vanishing[i] = if i == 1 {
+            denominator
+        } else {
+            vanishing[i - 1] * denominator
+        };
+    }
+    let mut inverse = vanishing[points.len() - 1].inv()?;
+    for i in (1..inverses.len()).rev() {
+        let denominator = inverses[i];
+        inverses[i] = inverse * vanishing[i];
+        inverse = inverse * denominator;
+    }
+    inverses[0] = inverse;
+    vanishing[0] = F::zero() - x;
+    vanishing[1] = F::one();
+    for (degree, &(x, y)) in (1..).zip(rest) {
+        // Only the first `degree` interpolation coefficients are populated.
+        let delta = (y - eval(&interpolation[..degree], x)) * inverses[degree - 1];
+        interpolation[degree] = delta; // Z is monic.
+        add_scaled(&mut interpolation[..degree], &vanishing[..degree], delta);
+        // Multiply Z by (X - x) in place, preserving the previous coefficients.
+        vanishing[degree + 1] = F::one();
+        vanishing[degree] = vanishing[degree - 1] - x;
+        for i in (1..degree).rev() {
+            vanishing[i] = vanishing[i - 1] - vanishing[i] * x;
+        }
+        vanishing[0] = F::zero() - vanishing[0] * x;
     }
     Ok((interpolation, vanishing))
 }
@@ -426,6 +459,49 @@ mod tests {
                 interpolate(&[points[0], points[0]]),
                 Err(Error::DegenerateChallenge)
             );
+        }
+    }
+
+    #[test]
+    fn interpolation_recovers_polynomials_with_shuffled_points_and_zero_coefficients() {
+        for count in [2, 3, 8, 31, 64] {
+            for nonzero in [0, 1, count / 2, count] {
+                let mut poly = vec![F::zero(); count];
+                for (i, coefficient) in poly[..nonzero].iter_mut().enumerate() {
+                    *coefficient = F::zero() - F::from_u64((i * i + 7) as u64);
+                }
+                // Mix domain points with zero, then reverse their order.
+                let points = (0..count)
+                    .rev()
+                    .map(|i| {
+                        let x = if i == 0 { F::zero() } else { point(i * 61) };
+                        (x, eval(&poly, x))
+                    })
+                    .collect::<Vec<_>>();
+                let (interpolation, vanishing) = interpolate(&points).unwrap();
+                assert_eq!(interpolation, poly);
+                assert_eq!(vanishing.len(), count + 1);
+                assert_eq!(vanishing[count], F::one());
+                for &(x, _) in &points {
+                    assert_eq!(eval(&vanishing, x), F::zero());
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn interpolation_rejects_duplicate_coordinates_at_any_position() {
+        let points = (0..8)
+            .map(|i| (F::from_u64(i), F::from_u64(i + 3)))
+            .collect::<Vec<_>>();
+        for i in 0..points.len() {
+            for j in i + 1..points.len() {
+                for y in [points[i].1, points[i].1 + F::one()] {
+                    let mut duplicate = points.clone();
+                    duplicate[j] = (points[i].0, y);
+                    assert_eq!(interpolate(&duplicate), Err(Error::DegenerateChallenge));
+                }
+            }
         }
     }
 

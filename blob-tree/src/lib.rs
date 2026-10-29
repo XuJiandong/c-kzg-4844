@@ -398,8 +398,53 @@ fn challenge(t: &[u8], quotient: &Commitment, statements: &[Statement]) -> Resul
     )
 }
 fn weights(statements: &[Statement], rho: F, z: F) -> Result<(Vec<F>, F)> {
-    weights_from_polynomials(statements.iter().map(|s| interpolate(&s.points)), rho, z)
+    // I(z) / Z(z) = sum_i y_i / ((z - x_i) * product_{j != i}(x_i - x_j)).
+    // Store each statement's barycentric denominators followed by Z(z), then
+    // invert the entire batch together. No polynomial coefficients are needed.
+    let mut inverses = Vec::with_capacity(statements.iter().map(|s| s.points.len() + 1).sum());
+    for statement in statements {
+        let points = &statement.points;
+        let start = inverses.len();
+        let mut vanishing = F::one();
+        for &(x, _) in points {
+            let difference = z - x;
+            vanishing = vanishing * difference;
+            inverses.push(difference);
+        }
+        let denominators = &mut inverses[start..];
+        for (i, &(xi, _)) in points.iter().enumerate() {
+            for (j, &(xj, _)) in points[..i].iter().enumerate() {
+                let difference = xi - xj;
+                denominators[i] = denominators[i] * difference;
+                denominators[j] = denominators[j] * (F::zero() - difference);
+            }
+        }
+        inverses.push(vanishing);
+    }
+    // Reject duplicate coordinates and challenges at queried points, even
+    // though validation and challenge derivation already exclude those cases.
+    batch_inverse(&mut inverses)?;
+    let mut inverses = inverses.as_slice();
+    let mut weights = Vec::with_capacity(statements.len());
+    let mut y = F::zero();
+    let mut power = F::one();
+    for statement in statements {
+        let (barycentric, rest) = inverses.split_at(statement.points.len());
+        let contribution = statement
+            .points
+            .iter()
+            .zip(barycentric)
+            .fold(F::zero(), |sum, ((_, value), inverse)| {
+                sum + *value * *inverse
+            });
+        y = y + power * contribution;
+        weights.push(power * rest[0]);
+        power = power * rho;
+        inverses = &rest[1..];
+    }
+    Ok((weights, y))
 }
+#[cfg(any(feature = "prover", test))]
 fn weights_from_polynomials(
     polynomials: impl Iterator<Item = Result<(Vec<F>, Vec<F>)>>,
     rho: F,
@@ -552,6 +597,116 @@ mod tests {
         assert_eq!(z, expected);
         assert_eq!(challenge(t, &d, &statements).unwrap(), z);
         assert!(weights(&statements, rho(t).unwrap(), z).is_ok());
+    }
+
+    #[test]
+    fn barycentric_weights_match_polynomial_evaluation() {
+        assert_eq!(
+            weights(&[], F::one(), F::zero()).unwrap(),
+            (vec![], F::zero())
+        );
+        for domain_points in [false, true] {
+            for zero_values in [false, true] {
+                let statements = [0, 1, 2, 3, 8, 25, 40, 64, 129].map(|count| Statement {
+                    commitment: G::default(),
+                    points: (0..count)
+                        .rev()
+                        .map(|i| {
+                            let bytes = (i as u64).to_be_bytes();
+                            let x = if domain_points {
+                                point(i * 31)
+                            } else if i == 0 {
+                                F::zero()
+                            } else {
+                                hash_field(b"test x", &[&bytes])
+                            };
+                            let y = if zero_values {
+                                F::zero()
+                            } else {
+                                hash_field(b"test y", &[&bytes])
+                            };
+                            (x, y)
+                        })
+                        .collect(),
+                });
+                for rho in [F::zero(), F::one(), F::from_u64(17)] {
+                    for z in [
+                        F::from_u64(2),
+                        F::zero() - F::one(),
+                        hash_field(b"test z", &[]),
+                    ] {
+                        let expected = weights_from_polynomials(
+                            statements.iter().map(|s| interpolate(&s.points)),
+                            rho,
+                            z,
+                        )
+                        .unwrap();
+                        assert_eq!(weights(&statements, rho, z).unwrap(), expected);
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn barycentric_weights_cover_the_full_domain() {
+        // All 4096 coordinates: I(X) = X^3 + 17 and Z(X) = X^4096 - 1.
+        // Check against those known polynomials without reconstructing them.
+        let constant = F::from_u64(17);
+        let statement = Statement {
+            commitment: G::default(),
+            points: (0..WIDTH)
+                .rev()
+                .map(|i| {
+                    let x = point(i);
+                    (x, x.pow(3) + constant)
+                })
+                .collect(),
+        };
+        let z = F::from_u64(7);
+        let weight = (z.pow(WIDTH) - F::one()).inv().unwrap();
+        assert_eq!(
+            weights(&[statement], F::from_u64(19), z).unwrap(),
+            (vec![weight], weight * (z.pow(3) + constant)),
+        );
+    }
+
+    #[test]
+    fn barycentric_weights_reject_duplicate_points_and_challenge_collisions() {
+        let points = (0..8)
+            .map(|i| (point(i), F::from_u64(i as u64)))
+            .collect::<Vec<_>>();
+        for i in 0..points.len() {
+            // Put the invalid statement after valid ones to exercise the shared batch.
+            let mut statements = [
+                Statement {
+                    commitment: G::default(),
+                    points: vec![],
+                },
+                Statement {
+                    commitment: G::default(),
+                    points: vec![(F::from_u64(3), F::one())],
+                },
+                Statement {
+                    commitment: G::default(),
+                    points: points.clone(),
+                },
+            ];
+            assert_eq!(
+                weights(&statements, F::one(), points[i].0),
+                Err(Error::DegenerateChallenge)
+            );
+            for j in i + 1..points.len() {
+                for value in [points[i].1, points[i].1 + F::one()] {
+                    statements[2].points = points.clone();
+                    statements[2].points[j] = (points[i].0, value);
+                    assert_eq!(
+                        weights(&statements, F::one(), F::from_u64(2)),
+                        Err(Error::DegenerateChallenge)
+                    );
+                }
+            }
+        }
     }
 
     #[test]

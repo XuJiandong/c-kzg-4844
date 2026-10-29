@@ -1,7 +1,8 @@
 # Verification optimization TODO
 
 Baseline profiled on 2026-10-28 using `ckb-debugger` and flamegraphs.
-Item 1 was implemented on 2026-10-29; the other priorities retain baseline costs.
+Items 1 and 2 were implemented on 2026-10-29; the remaining priorities retain
+baseline costs.
 
 ## Benchmark and profiling
 
@@ -56,12 +57,26 @@ Local profiling artifacts (temporary files, not committed):
    carry-heavy and random inputs, and in-place output checks. These also
    passed on VM v1. All three host Cargo test suites passed.
 
-2. **Evaluate interpolation directly at the challenge.** `weights()` costs
-   **101.94 M cycles (30.5%)**, including **80.69 M** in Fr multiplication.
-   Verification constructs complete interpolation and vanishing polynomials
-   only to evaluate them at one point. Use barycentric evaluation and direct
-   vanishing products; batch the required inversions. Existing Newton
-   denominator inversions are already batched.
+2. **Done: evaluate interpolation directly at the challenge.** Verification
+   now computes `I(z) / Z(z)` with the barycentric formula and `Z(z)` with a
+   direct product, without constructing polynomial coefficients. All point
+   denominators and vanishing values share one checked batch inversion.
+   The prover still reuses the polynomials needed to construct its quotient.
+
+   | Fixture | After item 1 | After item 2 | Reduction |
+   | --- | ---: | ---: | ---: |
+   | 1 value, 1 child | 61.13 M | 61.08 M | 0.1% |
+   | 6 values, 2 children | 65.51 M | 65.27 M | 0.4% |
+   | 1,000 values, 25 children | 228.70 M | 200.85 M | 12.2% |
+
+   Measured with `make -C ckb-tests bench-blob-tree`, Clang 19 and
+   `ckb-debugger` 1.1.1 (VM v2). Symbolized profiles show `weights()` falling
+   from **55.29 M to 27.44 M cycles (50.4%)**; total verification is 200.81 M.
+   Temporary artifacts are in
+   `/private/tmp/blob-tree-barycentric-profile/{verify.svg,verify.folded,summary.txt}`.
+   Tests compare against polynomial evaluation, cover all 4,096 domain points,
+   and reject duplicate coordinates and challenge collisions. `make ckb-test`
+   and all three host Cargo test suites passed.
 
 3. **Replace 26 separate G1 scalar multiplications with one MSM.** `G::scale`
    costs **90.32 M cycles (27.0%)**. Compute the weighted root/child commitment

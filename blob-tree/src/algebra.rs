@@ -4,7 +4,9 @@ use crate::blst_ffi::*;
 #[cfg(feature = "prover")]
 use crate::WIDTH;
 use crate::{Error, Result};
-use alloc::{vec, vec::Vec};
+#[cfg(any(feature = "prover", test))]
+use alloc::vec;
+use alloc::vec::Vec;
 #[cfg(not(target_arch = "riscv64"))]
 use blst::*;
 
@@ -275,9 +277,32 @@ pub(crate) fn blob(poly: &[F]) -> c_kzg::Blob {
         .collect::<Vec<_>>();
     c_kzg::Blob::from_bytes(&bytes).expect("fixed-size canonical field elements")
 }
+/// Invert nonzero field elements with one inversion and linear scratch space.
+pub(crate) fn batch_inverse(values: &mut [F]) -> Result<()> {
+    let Some((&first, rest)) = values.split_first() else {
+        return Ok(());
+    };
+    let mut products = Vec::with_capacity(values.len());
+    products.push(first);
+    for &value in rest {
+        products.push(*products.last().unwrap() * value);
+    }
+    // A zero anywhere in the batch makes the product zero.
+    let mut inverse = products.last().unwrap().inv()?;
+    for i in (1..values.len()).rev() {
+        let value = values[i];
+        values[i] = inverse * products[i - 1];
+        inverse = inverse * value;
+    }
+    values[0] = inverse;
+    Ok(())
+}
+
+#[cfg(any(feature = "prover", test))]
 pub(crate) fn eval(poly: &[F], x: F) -> F {
     poly.iter().rev().fold(F::zero(), |v, c| v * x + *c)
 }
+#[cfg(any(feature = "prover", test))]
 pub(crate) fn add_scaled(out: &mut [F], poly: &[F], scale: F) {
     assert!(poly.len() <= out.len());
     for (a, b) in out.iter_mut().zip(poly) {
@@ -285,6 +310,7 @@ pub(crate) fn add_scaled(out: &mut [F], poly: &[F], scale: F) {
     }
 }
 /// Newton interpolation, plus the monic vanishing polynomial. Points must be distinct.
+#[cfg(any(feature = "prover", test))]
 pub(crate) fn interpolate(points: &[(F, F)]) -> Result<(Vec<F>, Vec<F>)> {
     let Some((&(x, y), rest)) = points.split_first() else {
         return Ok((Vec::new(), vec![F::one()]));
@@ -412,6 +438,22 @@ impl G {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn batch_inversion_matches_individual_inverses_and_rejects_zero() {
+        for count in [0, 1, 2, 31, 129] {
+            let values = (1..=count).map(F::from_u64).collect::<Vec<_>>();
+            let expected = values.iter().map(|v| v.inv().unwrap()).collect::<Vec<_>>();
+            let mut actual = values.clone();
+            batch_inverse(&mut actual).unwrap();
+            assert_eq!(actual, expected);
+            for i in 0..values.len() {
+                let mut invalid = values.clone();
+                invalid[i] = F::zero();
+                assert_eq!(batch_inverse(&mut invalid), Err(Error::DegenerateChallenge));
+            }
+        }
+    }
 
     #[test]
     fn cached_domain_points_match_exponentiation() {

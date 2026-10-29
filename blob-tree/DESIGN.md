@@ -119,7 +119,7 @@ $$
 e\!\left(C_g - y \cdot G_1,\, G_2\right) = e\!\left(W,\, [\tau]G_2 - z \cdot G_2\right).
 $$
 
-This is **one equation with two pairing terms**, not a single pairing. The repository's `pairings_verify` in `src/common/utils.c` uses two Miller loops and one final exponentiation. Prover-side commitments and openings require no pairings. Verification performs this one check regardless of the number of queried elements or children.
+This is **one equation with two pairing terms**, not a single pairing. The repository's `pairings_verify` in `src/common/utils.c` uses a combined Miller loop and one final exponentiation. Prover-side commitments and openings require no pairings. Verification performs this one check regardless of the number of queried elements or children.
 
 ## 4. Proof size and computational cost
 

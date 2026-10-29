@@ -1,7 +1,7 @@
 # Verification optimization TODO
 
 Baseline profiled on 2026-10-28 using `ckb-debugger` and flamegraphs.
-Items 1–3 were implemented on 2026-10-29; the remaining priorities retain
+Items 1–3 and 6 were implemented on 2026-10-29; the remaining priorities retain
 baseline costs.
 
 ## Benchmark and profiling
@@ -107,7 +107,7 @@ Local profiling artifacts (temporary files, not committed):
    full-width scalars, non-affine points, zero/infinity terms, cancellation
    and a 4,097-point sum. `make ckb-test` and all three host Cargo suites passed.
 
-4. **Reuse validated points across verification boundaries.** `G::decode`
+4. **(Tried, will not be used) Reuse validated points across verification boundaries.** `G::decode`
    costs **68.59 M cycles (20.5%)**, including **55.01 M** in subgroup checks.
    Introduce an internal validated-point path so the opening and computed
    aggregate need not be serialized, decompressed, and subgroup-checked again
@@ -115,16 +115,25 @@ Local profiling artifacts (temporary files, not committed):
    also reduce end-to-end costs, though parsing is outside this benchmark's
    timer.
 
-5. **Provide a lightweight single-opening verifier context.**
+5. **(Tried, will not be used) Provide a lightweight single-opening verifier context.**
    `KzgVerifier::new` costs **6.92 M cycles (2.1%)**. It constructs 4,096 roots
    of unity although single-opening verification does not use them. Initialize
    that table lazily, and reuse or precompute the authenticated fixed G2 key
    representation.
 
-6. **Combine the two Miller loops.** Pairing verification costs **33.09 M
-   cycles (9.9%)**: **19.31 M** in Miller loops and **13.51 M** in final
-   exponentiation. Evaluate `blst_miller_loop_n` for the two pairs; the
-   implementation already performs only one final exponentiation.
+6. **Done: combine the two Miller loops.** `pairings_verify` now uses
+   `blst_miller_loop_n` for both pairs, retaining one final exponentiation.
+   The pre-change flamegraph showed **19.31 M cycles** in Miller loops and
+   **13.51 M** in final exponentiation.
+
+   | Fixture | Before | After | Reduction |
+   | --- | ---: | ---: | ---: |
+   | 1 value, 1 child | 60.59 M | 57.24 M | 5.5% |
+   | 6 values, 2 children | 63.41 M | 60.06 M | 5.3% |
+   | 1,000 values, 25 children | 167.00 M | 163.65 M | 2.0% |
+
+   Measured with `make -C ckb-tests bench-blob-tree`, Clang 19 and
+   `ckb-debugger` 1.1.1 (VM v2). `make ckb-test` and `cargo test --locked` passed.
 
 These are measured optimization targets, not predicted savings. Their costs
 overlap, especially with item 1, and must not be added together.

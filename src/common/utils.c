@@ -170,9 +170,11 @@ void compute_powers(fr_t *out, const fr_t *x, size_t n) {
  * @retval false The pairings were not equal
  */
 bool pairings_verify(const g1_t *a1, const g2_t *a2, const g1_t *b1, const g2_t *b2) {
-    blst_fp12 loop0, loop1, gt_point;
+    blst_fp12 gt_point;
     blst_p1_affine aa1, bb1;
     blst_p2_affine aa2, bb2;
+    const blst_p1_affine *ps[] = {&aa1, &bb1};
+    const blst_p2_affine *qs[] = {&aa2, &bb2};
 
     /*
      * As an optimisation, we want to invert one of the pairings,
@@ -186,10 +188,7 @@ bool pairings_verify(const g1_t *a1, const g2_t *a2, const g1_t *b1, const g2_t 
     blst_p2_to_affine(&aa2, a2);
     blst_p2_to_affine(&bb2, b2);
 
-    blst_miller_loop(&loop0, &aa2, &aa1);
-    blst_miller_loop(&loop1, &bb2, &bb1);
-
-    blst_fp12_mul(&gt_point, &loop0, &loop1);
+    blst_miller_loop_n(&gt_point, qs, ps, 2);
     blst_final_exp(&gt_point, &gt_point);
 
     return blst_fp12_is_one(&gt_point);

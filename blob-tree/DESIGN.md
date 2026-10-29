@@ -138,7 +138,7 @@ Proving is intentionally unoptimized, using naive Newton interpolation and polyn
 
 ## 5. Transcript and encoding
 
-The protocol fixes the Ethereum trusted setup and uses the protocol domain `blob-tree/v1/ethereum-4844/shplonk`. Callers cannot substitute another SRS.
+The protocol fixes the Ethereum trusted setup and uses the protocol domain `blob-tree/shplonk`. Callers cannot substitute another SRS.
 
 $T$ concatenates the following fields in order. All integers are **u64 big-endian**:
 

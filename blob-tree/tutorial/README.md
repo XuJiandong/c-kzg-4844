@@ -139,30 +139,14 @@ At the boundaries, authenticate only the first or last element:
 - If $e < e_0$, prove membership of $e_0$ at index $0$.
 - If $e_{n-1} < e$, prove membership of $e_{n-1}$ at index $n-1$, using the trusted length $n$.
 
-## 5. Security boundaries
+## 5. Highlights
 
-Connect each element all the way to the root.
-
-### Verify both levels
-
-The child opening binds the element to its child commitment. The top-level opening binds that commitment's hash to the root. Both are needed to establish membership in this tree.
-
-### Preserve the transcript order
-
-The challenge ρ binds the complete statement; z also binds D. Letting the prover choose D after seeing z would let it tailor a false relation to that single checking point.
-
-### Hash before reducing
-
-Directly reducing raw integers would identify x and x+r. Instead, SHA-256 hashes domain-separated, length-prefixed byte strings before the digest is reduced to a field element.
-
-### Authenticate the length
-
-The trusted root is the complete pair (R, n). Out-of-range and padding positions are not members. Queries must be strictly increasing, unique, and less than n.
-
-### Degenerate challenges and special curve points
-
-If ρ is zero or z equals any queried evaluation point at either tree level, retry its hash with a big-endian u64 nonce starting at 1. Prover and verifier select the first valid candidate independently, so no nonce is sent. 
-
+- **Flexible values.** Elements are arbitrary byte strings, including empty strings, with no fixed field-size limit. Values must be unique;
+- **Two levels, large capacity.** The structure supports up to 16,777,216 elements.
+- **One KZG verification for many queries.** Both levels and all queried elements reduce to one KZG check with two pairing terms. 
+- **Shared proof overhead.** Queries in the same child share one 48-byte commitment. When queries are locally distributed, the proof size doesn't change.
+- **Non-membership from neighbors.** For a root built from sorted, unique values, applications can check absence using adjacent-neighbor membership proofs
+- **CKB-VM verification.** The `verification-only` feature supports `no_std` verification
 
 ## Continues
 

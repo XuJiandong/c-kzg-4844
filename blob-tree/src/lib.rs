@@ -338,14 +338,14 @@ fn statements(
     }
     Ok(core::iter::once(top).chain(rows).collect())
 }
-/// Length-prefixed, architecture-independent transcript; fixed Ethereum SRS and v1 domain.
+/// Length-prefixed, architecture-independent transcript with a fixed Ethereum SRS.
 fn transcript(
     root: &Root,
     indices: &[usize],
     values: &[Vec<u8>],
     children: &[Commitment],
 ) -> Vec<u8> {
-    let mut t = b"blob-tree/v1/ethereum-4844/shplonk".to_vec();
+    let mut t = b"blob-tree/shplonk".to_vec();
     t.extend_from_slice(&(root.len as u64).to_be_bytes());
     t.extend_from_slice(&root.commitment);
     t.extend_from_slice(&(indices.len() as u64).to_be_bytes());

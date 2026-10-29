@@ -52,6 +52,38 @@ extern "C" {
     pub fn blst_p1_add_or_double(out: *mut blst_p1, a: *const blst_p1, b: *const blst_p1);
     pub fn blst_p1_cneg(p: *mut blst_p1, cbit: bool);
     pub fn blst_p1_mult(out: *mut blst_p1, p: *const blst_p1, scalar: *const u8, nbits: usize);
+    pub fn blst_p1_is_inf(p: *const blst_p1) -> bool;
+    pub fn blst_p1s_to_affine(
+        dst: *mut blst_p1_affine,
+        points: *const *const blst_p1,
+        npoints: usize,
+    );
+    pub fn blst_p1s_mult_pippenger_scratch_sizeof(npoints: usize) -> usize;
+    pub fn blst_p1s_mult_wbits_precompute_sizeof(wbits: usize, npoints: usize) -> usize;
+    pub fn blst_p1s_mult_wbits_precompute(
+        table: *mut blst_p1_affine,
+        wbits: usize,
+        points: *const *const blst_p1_affine,
+        npoints: usize,
+    );
+    pub fn blst_p1s_mult_wbits_scratch_sizeof(npoints: usize) -> usize;
+    pub fn blst_p1s_mult_wbits(
+        ret: *mut blst_p1,
+        table: *const blst_p1_affine,
+        wbits: usize,
+        npoints: usize,
+        scalars: *const *const u8,
+        nbits: usize,
+        scratch: *mut u64,
+    );
+    pub fn blst_p1s_mult_pippenger(
+        ret: *mut blst_p1,
+        points: *const *const blst_p1_affine,
+        npoints: usize,
+        scalars: *const *const u8,
+        nbits: usize,
+        scratch: *mut u64,
+    );
 }
 
 #[cfg(all(test, not(target_arch = "riscv64")))]

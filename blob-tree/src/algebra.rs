@@ -1,10 +1,9 @@
-//! Small, private blst boundary. All pointers refer to initialized fixed-size objects.
+//! Small, private blst boundary. All FFI buffers are initialized and sized for BLST.
 #[cfg(target_arch = "riscv64")]
 use crate::blst_ffi::*;
 #[cfg(feature = "prover")]
 use crate::WIDTH;
 use crate::{Error, Result};
-#[cfg(any(feature = "prover", test))]
 use alloc::vec;
 use alloc::vec::Vec;
 #[cfg(not(target_arch = "riscv64"))]
@@ -424,12 +423,79 @@ impl G {
         }
         self
     }
+    #[cfg(test)]
     pub fn scale(self, scalar: F) -> Self {
         let mut bytes = scalar.bytes();
         bytes.reverse();
         let mut out = Self::default();
         unsafe {
             blst_p1_mult(&mut out.0, &self.0, bytes.as_ptr(), 255);
+        }
+        out
+    }
+
+    /// Variable-time MSM of validated points and public verification weights.
+    pub fn msm(terms: impl IntoIterator<Item = (Self, F)>) -> Self {
+        let mut points = Vec::new();
+        let mut scalars = Vec::new();
+        for (point, weight) in terms {
+            // BLST's MSM routines expect non-infinity points. Zero terms can
+            // also be omitted, including the all-zero/empty case below.
+            if weight == F::zero() || unsafe { blst_p1_is_inf(&point.0) } {
+                continue;
+            }
+            let mut scalar = blst_scalar::default();
+            unsafe { blst_scalar_from_fr(&mut scalar, &weight.0) };
+            points.push(point.0);
+            scalars.push(scalar);
+        }
+        let n = points.len();
+        let mut out = Self::default();
+        if n == 0 {
+            return out;
+        }
+        if n == 1 {
+            unsafe { blst_p1_mult(&mut out.0, &points[0], scalars[0].b.as_ptr(), 255) };
+            return out;
+        }
+        let mut affine = vec![blst_p1_affine::default(); n];
+        // BLST accepts a pointer to a contiguous array followed by NULL.
+        let point_ptrs = [points.as_ptr(), core::ptr::null()];
+        let affine_ptrs = [affine.as_ptr(), core::ptr::null()];
+        let scalar_ptrs = [scalars[0].b.as_ptr(), core::ptr::null()];
+        unsafe {
+            blst_p1s_to_affine(affine.as_mut_ptr(), point_ptrs.as_ptr(), n);
+            if n < 32 {
+                // A 5-bit joint window wins for small batches on CKB-VM,
+                // including table construction (see TODO.md, item 3).
+                const WINDOW: usize = 5;
+                let bytes = blst_p1s_mult_wbits_precompute_sizeof(WINDOW, n);
+                let mut table =
+                    vec![blst_p1_affine::default(); bytes / core::mem::size_of::<blst_p1_affine>()];
+                blst_p1s_mult_wbits_precompute(table.as_mut_ptr(), WINDOW, affine_ptrs.as_ptr(), n);
+                let bytes = blst_p1s_mult_wbits_scratch_sizeof(n);
+                let mut scratch = vec![0u64; bytes.div_ceil(core::mem::size_of::<u64>())];
+                blst_p1s_mult_wbits(
+                    &mut out.0,
+                    table.as_ptr(),
+                    WINDOW,
+                    n,
+                    scalar_ptrs.as_ptr(),
+                    255,
+                    scratch.as_mut_ptr(),
+                );
+            } else {
+                let bytes = blst_p1s_mult_pippenger_scratch_sizeof(n);
+                let mut scratch = vec![0u64; bytes.div_ceil(core::mem::size_of::<u64>())];
+                blst_p1s_mult_pippenger(
+                    &mut out.0,
+                    affine_ptrs.as_ptr(),
+                    n,
+                    scalar_ptrs.as_ptr(),
+                    255,
+                    scratch.as_mut_ptr(),
+                );
+            }
         }
         out
     }
@@ -477,6 +543,72 @@ mod tests {
             assert_eq!(p.neg().neg().bytes(), p.bytes());
             assert_eq!(p.add(p.neg()).bytes(), G::default().bytes());
         }
+    }
+
+    #[test]
+    fn msm_matches_individual_multiplications() {
+        let commitment = include_bytes!("../tests/fixtures/single.bin")[..48]
+            .try_into()
+            .unwrap();
+        let generator = G::decode(commitment).unwrap();
+        let mut point = generator;
+        let terms = (0..129u64)
+            .map(|i| {
+                // Non-affine points, both signs, and full-width public scalars.
+                point = point.add(generator);
+                let weight = crate::hash_field(b"msm test", &[&i.to_be_bytes()]);
+                (if i % 2 == 0 { point } else { point.neg() }, weight)
+            })
+            .collect::<Vec<_>>();
+        // Cover both algorithms, their boundary, and BLST's larger windows.
+        for n in [0, 1, 2, 3, 15, 16, 26, 31, 32, 33, 63, 64, 65, 129] {
+            let expected = terms[..n]
+                .iter()
+                .fold(G::default(), |sum, &(p, s)| sum.add(p.scale(s)));
+            assert_eq!(
+                G::msm(terms[..n].iter().copied()).bytes(),
+                expected.bytes(),
+                "n={n}"
+            );
+        }
+    }
+
+    #[test]
+    fn msm_handles_zero_terms_and_cancellation() {
+        let commitment = include_bytes!("../tests/fixtures/single.bin")[..48]
+            .try_into()
+            .unwrap();
+        let p = G::decode(commitment).unwrap();
+        let infinity = G::default();
+        let minus_one = F::zero() - F::one();
+        for n in [0, 1, 2, 26, 31, 32, 33] {
+            assert_eq!(
+                G::msm(vec![(infinity, minus_one); n]).bytes(),
+                infinity.bytes()
+            );
+            assert_eq!(G::msm(vec![(p, F::zero()); n]).bytes(), infinity.bytes());
+            let mut terms = vec![(infinity, minus_one); n];
+            terms.push((p, minus_one));
+            terms.push((p, F::zero()));
+            assert_eq!(G::msm(terms).bytes(), p.neg().bytes());
+        }
+        // Dense high bits, repeated/opposite points and sums equal to infinity
+        // exercise signed window carries in both MSM algorithms.
+        for n in [2, 26, 32, 34] {
+            for pair in [
+                [(p, F::one()), (p, minus_one)],
+                [(p, minus_one), (p.neg(), minus_one)],
+            ] {
+                let terms = pair.into_iter().cycle().take(n);
+                assert_eq!(G::msm(terms).bytes(), infinity.bytes());
+            }
+        }
+        // Maximum root plus child batch; also checks the large-batch allocation.
+        let n = crate::WIDTH + 1;
+        assert_eq!(
+            G::msm(core::iter::repeat((p, minus_one)).take(n)).bytes(),
+            p.scale(F::zero() - F::from_u64(n as u64)).bytes()
+        );
     }
 
     #[test]

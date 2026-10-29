@@ -484,10 +484,13 @@ pub fn verify(root: &Root, values: &[Vec<u8>], proof: &Proof) -> Result<bool> {
     let rho = rho(&t)?;
     let z = challenge(&t, &proof.quotient, &statements)?;
     let (weights, y) = weights(&statements, rho, z)?;
-    let mut combined = q.neg();
-    for (statement, weight) in statements.iter().zip(weights) {
-        combined = combined.add(statement.commitment.scale(weight));
-    }
+    let combined = G::msm(
+        statements
+            .iter()
+            .zip(weights)
+            .map(|(statement, weight)| (statement.commitment, weight)),
+    )
+    .add(q.neg());
     #[cfg(feature = "prover")]
     return Ok(ethereum_kzg_settings(0).verify_kzg_proof(
         &Bytes48::from(combined.bytes()),

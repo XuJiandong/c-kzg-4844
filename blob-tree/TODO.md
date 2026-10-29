@@ -1,7 +1,7 @@
 # Verification optimization TODO
 
 Baseline profiled on 2026-10-28 using `ckb-debugger` and flamegraphs.
-Items 1 and 2 were implemented on 2026-10-29; the remaining priorities retain
+Items 1–3 were implemented on 2026-10-29; the remaining priorities retain
 baseline costs.
 
 ## Benchmark and profiling
@@ -78,11 +78,34 @@ Local profiling artifacts (temporary files, not committed):
    and reject duplicate coordinates and challenge collisions. `make ckb-test`
    and all three host Cargo test suites passed.
 
-3. **Replace 26 separate G1 scalar multiplications with one MSM.** `G::scale`
-   costs **90.32 M cycles (27.0%)**. Compute the weighted root/child commitment
-   sum using a multi-scalar multiplication algorithm. Benchmark Pippenger
-   against a joint-window/Straus implementation at this relatively small batch
-   size.
+3. **Done: replace separate G1 scalar multiplications with one MSM.** The
+   weighted root/child commitment sum uses BLST's 5-bit joint-window/Straus
+   method for 2–31 nonzero terms and Pippenger for larger batches. Empty sums
+   return infinity; singleton sums use scalar multiplication. Untrusted point
+   validation is unchanged, and the quotient is still subtracted separately.
+
+   | Fixture | After item 2 | After item 3 | Reduction |
+   | --- | ---: | ---: | ---: |
+   | 1 value, 1 child | 61.08 M | 60.59 M | 0.8% |
+   | 6 values, 2 children | 65.27 M | 63.41 M | 2.8% |
+   | 1,000 values, 25 children | 200.85 M | 167.00 M | 16.9% |
+
+   Measured with `make -C ckb-tests bench-blob-tree`, Clang 19 and
+   `ckb-debugger` 1.1.1 (VM v2), including affine conversion, allocation and
+   table construction. At 26 points, BLST's default MSM dispatch (4-bit Straus)
+   took **167.76 M** total verification cycles. Explicit Straus windows 3–6
+   performed best at 5 bits (**167.00 M**); explicit Pippenger windows 2–6
+   performed best at 4 bits (**167.16 M**). Pippenger was measured through its
+   tile API because BLST's ordinary entry point selects Straus below 32 points.
+
+   Symbolized profiles show **62.77 M** cycles in the old `G::scale` calls
+   versus **29.44 M** in `G::msm`; total verification is **166.97 M**. Temporary
+   artifacts are in `/private/tmp/blob-tree-msm-profile/` (flamegraph, folded
+   stacks and summary) and `/private/tmp/blob-tree-msm-bench/` (comparison
+   script, candidate implementations and logs).
+   Differential tests cover both algorithms, the 31/32-point boundary,
+   full-width scalars, non-affine points, zero/infinity terms, cancellation
+   and a 4,097-point sum. `make ckb-test` and all three host Cargo suites passed.
 
 4. **Reuse validated points across verification boundaries.** `G::decode`
    costs **68.59 M cycles (20.5%)**, including **55.01 M** in subgroup checks.

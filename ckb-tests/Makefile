@@ -13,11 +13,14 @@ MAX_CYCLES ?= 3500000000
 BINARY := target/riscv64imac-unknown-none-elf/release/ckb-kzg-tests
 BLOB_TREE_BINARY := target/riscv64imac-unknown-none-elf/release/blob-tree
 
-.PHONY: build test test-kzg test-blob-tree bench-blob-tree clean
+.PHONY: build test test-montgomery test-kzg test-blob-tree bench-blob-tree clean
 build:
 	CC="$(CC)" CLANG="$(CC)" AR="$(AR)" $(CARGO) build --locked --release --bins
 
-test: test-kzg test-blob-tree
+test: test-montgomery test-kzg test-blob-tree
+
+test-montgomery: build
+	$(CKB_DEBUGGER) --bin target/riscv64imac-unknown-none-elf/release/montgomery --max-cycles $(MAX_CYCLES)
 
 test-kzg: build
 	$(PYTHON) run.py --debugger "$(CKB_DEBUGGER)" --max-cycles $(MAX_CYCLES) kzg --binary $(BINARY) --case $(CASE) $(KZG_ARGS)

@@ -1,7 +1,7 @@
 # Verification optimization TODO
 
-Profiled on 2026-10-28 using `ckb-debugger` and flamegraphs. No optimization
-changes were made as part of this report.
+Baseline profiled on 2026-10-28 using `ckb-debugger` and flamegraphs.
+Item 1 was implemented on 2026-10-29; the other priorities retain baseline costs.
 
 ## Benchmark and profiling
 
@@ -28,12 +28,33 @@ Local profiling artifacts (temporary files, not committed):
 
 ## Optimization priorities
 
-1. **Optimize Fr multiplication and Fp squaring for RV64.** Generic
+1. **Done: optimize Fr multiplication and Fp squaring for RV64.** Generic
    `mul_mont_n` consumes **180.71 M cycles (54.1%)** across verification.
    The current assembly covers 384-bit multiplication, while 256-bit Fr
-   multiplication and 384-bit squaring still use generic C. Add specialized
-   Montgomery multiplication/squaring routines. This benefits interpolation,
-   scalar multiplication, and subgroup checks.
+   multiplication and 384-bit squaring previously used generic C. Added
+   register-based 256-bit Montgomery multiplication and a 384-bit square with
+   21 wide products instead of 36, followed by Montgomery reduction.
+   Fr squaring also uses the new multiplication routine.
+
+   The new assembly preserves adjacent `mulhu`/`mul`, `add`/`sltu`/`add`, and
+   `sub`/`sltu` sequences for CKB-VM fusion. Compression is disabled around the
+   carry additions because `c.add` can swap operands and prevent ADD3 matching.
+   The VM v2 decoder confirmed WIDE_MULU, ADD3A/ADD3C, and SBBS matches.
+
+   | Fixture | Before | After | Reduction |
+   | --- | ---: | ---: | ---: |
+   | 1 value, 1 child | 71.61 M | 61.13 M | 14.6% |
+   | 6 values, 2 children | 77.93 M | 65.51 M | 15.9% |
+   | 1,000 values, 25 children | 334.36 M | 228.70 M | 31.6% |
+
+   Measured with `make -C ckb-tests bench-blob-tree`, Clang 19 and
+   `ckb-debugger` 1.1.1 (VM v2). The symbolized after-profile measured
+   228.67 M verification cycles; Fr multiplication used 38.50 M and Fp
+   squaring 33.91 M. Temporary artifacts are in
+   `/private/tmp/blob-tree-profile-after/{verify.svg,verify.folded,summary.txt}`.
+   `make ckb-test` includes independent bit-serial arithmetic comparisons,
+   carry-heavy and random inputs, and in-place output checks. These also
+   passed on VM v1. All three host Cargo test suites passed.
 
 2. **Evaluate interpolation directly at the challenge.** `weights()` costs
    **101.94 M cycles (30.5%)**, including **80.69 M** in Fr multiplication.

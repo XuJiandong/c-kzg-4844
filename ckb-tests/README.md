@@ -30,13 +30,18 @@ let valid = verifier.verify_kzg_proof(&commitment, &z, &y, &proof)?;
 
 The two files in `blst/src/asm`, `blst_mul_mont_384.riscv.S` and
 `blst_mul_mont_384x.riscv.S`, are copied unchanged from [ckb-blst-rs](https://github.com/nervosnetwork/ckb-blst-rs/).
+`blst_mont_rv64.S` adds Fr multiplication/squaring and dedicated Fp squaring.
+Its multiply and carry sequences use CKB-VM macro-operation fusion; the
+arithmetic remains valid on RV64 without fusion. `make ckb-test` also compares
+these routines with an independent bit-serial reference, including in-place
+outputs and carry-heavy inputs.
 
 `make ckb-test` measures:
 
 | Function | Cycles per call |
 | --- | --- |
-| `verify_kzg_proof` | 48 M cycles |
-| `verify_blob_kzg_proof` | 91 M cycles |
+| `verify_kzg_proof` | 45 M cycles |
+| `verify_blob_kzg_proof` | 75 M cycles |
 
 Run `make blob-tree-bench` separately for the [blob-tree verification benchmarks](../blob-tree/README.md#verification-on-ckb-vm).
 

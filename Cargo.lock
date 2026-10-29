@@ -70,6 +70,7 @@ version = "0.1.0"
 dependencies = [
  "blst",
  "c-kzg",
+ "criterion",
  "sha2",
 ]
 

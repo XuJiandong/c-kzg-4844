@@ -59,12 +59,15 @@ ckb-build:
 ckb-test:
 	$(MAKE) -C ckb-tests test
 
-.PHONY: blob-tree-test blob-tree-bench
+.PHONY: blob-tree-test blob-tree-bench blob-tree-bench-native
 blob-tree-test:
 	cargo test --manifest-path blob-tree/Cargo.toml --locked
 	cargo test --manifest-path blob-tree/Cargo.toml --locked --no-default-features --features verification-only
 	cargo run --manifest-path blob-tree/Cargo.toml --locked --example basic
 	$(MAKE) -C ckb-tests test-blob-tree
 
-blob-tree-bench:
+blob-tree-bench: blob-tree-bench-native
 	$(MAKE) -C ckb-tests bench-blob-tree
+
+blob-tree-bench-native:
+	cargo bench --manifest-path blob-tree/Cargo.toml --locked --bench generation

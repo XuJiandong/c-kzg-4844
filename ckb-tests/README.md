@@ -43,7 +43,7 @@ outputs and carry-heavy inputs.
 | `verify_kzg_proof` | 45 M cycles |
 | `verify_blob_kzg_proof` | 75 M cycles |
 
-Run `make blob-tree-bench` separately for the [blob-tree verification benchmarks](../blob-tree/README.md#verification-on-ckb-vm).
+Run `make blob-tree-bench` separately for the [blob-tree generation and verification benchmarks](../blob-tree/README.md#native-generation-benchmarks).
 
 Compared with the pure C baseline below, performance improves substantially.
 

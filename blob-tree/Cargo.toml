@@ -18,7 +18,9 @@ sha2 = { version = "0.10.9", default-features = false }
 blst = { version = "0.3.16", default-features = false }
 
 [dev-dependencies]
+blake2b-rs = "0.2"
 criterion = "0.5.1"
+sparse-merkle-tree = { version = "0.6.1", features = ["trie"] }
 
 [[bench]]
 name = "generation"
@@ -27,6 +29,10 @@ required-features = ["prover"]
 
 [[example]]
 name = "basic"
+required-features = ["prover"]
+
+[[example]]
+name = "proof_size"
 required-features = ["prover"]
 
 [[example]]

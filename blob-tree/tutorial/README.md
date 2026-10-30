@@ -43,12 +43,22 @@ $\text{Proof size} = v(k) + \sum_{j=0}^{k-1} v(i_j) + 48 m + 96$ bytes, where $v
 Consider the scenario where many elements must be proven. The `48m` term accounts for the child commitments and can be estimated from the number of queried children. The worst case occurs when every child is in use. Since the number of children is about n/4096, where n is the total element count, the `48m` term is about n/85. For n = 100,000 and n = 1,000,000, this gives roughly 1.18K and 11.8K respectively. With every child queried, the proof is at most 196708 + 4k bytes; whether it fits in a CKB transaction also depends on the query count and the separately supplied elements.
 
 Compared with the [SMT](https://github.com/nervosnetwork/sparse-merkle-tree) below, the reduction is significant:
-| total elements | elements to be proven | Proof size (B) |
-| ---: | ---: | ---: |
-| 100000 | 1 | 599 |
-| 100000 | 10 | 4704 |
-| 100000 | 100 | 36850 |
-| 100000 | 1000 | 271763 |
+```
+cargo run --manifest-path blob-tree/Cargo.toml --locked --example proof_size --release
+N (leaves)  M (queries) proof size(bytes)
+    100000            1            146
+    100000           10            604
+    100000          100           1579
+    100000         1000           4132
+
+cargo run --manifest-path blob-tree/Cargo.toml --locked --example smt_proof_size --release
+N (leaves)  M (queries) proof size(bytes)
+    100000            1            599
+    100000           10           4704
+    100000          100          36850
+    100000         1000         271763    
+```
+
 
 This proof size problem is why we seek a new tree structure rather than relying on the existing SMT.
 

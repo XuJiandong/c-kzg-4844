@@ -5,7 +5,7 @@ The root crate's `verification-only` feature exposes a `KzgVerifier` with point,
 ## Build and run
 
 Prerequisites: Rust with `riscv64imac-unknown-none-elf` installed, Clang >= 19
-with a RISC-V backend, LLVM's `llvm-ar`, and the already installed
+with a RISC-V backend, LLVM's `llvm-ar`, Python 3, and the already installed
 `ckb-debugger`.
 
 From the repository root:
@@ -15,7 +15,7 @@ git submodule update --init --recursive
 make ckb-test
 ```
 
-## Library use
+## Library use on ckb-vm
 
 ```toml
 c-kzg = { path = "..", default-features = false, features = ["verification-only"] }
@@ -27,16 +27,12 @@ let valid = verifier.verify_kzg_proof(&commitment, &z, &y, &proof)?;
 ```
 
 ## RISC-V assembly
-
-The two files in `blst/src/asm`, `blst_mul_mont_384.riscv.S` and
-`blst_mul_mont_384x.riscv.S`, are copied unchanged from [ckb-blst-rs](https://github.com/nervosnetwork/ckb-blst-rs/).
-
 `make ckb-test` measures:
 
 | Function | Cycles per call |
 | --- | --- |
-| `verify_kzg_proof` | 48 M cycles |
-| `verify_blob_kzg_proof` | 91 M cycles |
+| `verify_kzg_proof` | 45 M cycles |
+| `verify_blob_kzg_proof` | 75 M cycles |
 
 Compared with the pure C baseline below, performance improves substantially.
 

@@ -5,6 +5,7 @@ edition = "2021"
 publish = false
 
 [dependencies]
+blob-tree = { path = "../blob-tree", default-features = false, features = ["verification-only"] }
 c-kzg = { path = "..", default-features = false, features = ["verification-only"] }
 ckb-std = { version = "=1.1.0", default-features = false, features = ["allocator", "log"] }
 log = { version = "0.4", default-features = false }

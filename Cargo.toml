@@ -1,3 +1,8 @@
+[workspace]
+members = ["blob-tree"]
+exclude = ["ckb-tests"]
+resolver = "2"
+
 [package]
 name = "c-kzg"
 version = "2.1.8"

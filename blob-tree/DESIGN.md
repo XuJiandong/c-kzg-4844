@@ -107,7 +107,7 @@ Here the child list contains only queried children, in ascending child-index ord
 
 `Tree::prove(indices)` returns `(values, proof)` with the selected values in index order. Verification sorts a copy of the supplied values using the same byte ordering, then pairs `values[p]` with `proof.indices[p]` and rejects mismatched counts. Callers may supply values in any order; their input is not modified. Applications requiring specific positions must check `proof.indices` against those positions.
 
-Reconstruct $T$, $\rho$, $z$, $I_i$, $Z_i$, $a_i$, and $y$. Use G1 addition and scalar multiplication to compute:
+Reconstruct $T$, $\rho$, and $z$, then evaluate $I_i(z)/Z_i(z)$ and $Z_i(z)$ directly using barycentric interpolation and products, without constructing polynomial coefficients. Derive $a_i$ and $y$, and use a batched G1 multiscalar multiplication to compute:
 
 $$
 C_g = \sum_{i=0}^{m} a_i C_i - D.
@@ -134,7 +134,9 @@ A proof for $k$ queries at indices $i_j$ spanning $m$ children is $v(k) + \sum_{
 
 These sizes include the index count and indices, and exclude the public root and original elements. The original elements are part of the statement being verified; they are not implicitly hidden or transmitted for free. This construction makes no claim of globally optimal proof size. It favors a readable two-point reduction that avoids individual opening witnesses. Child commitments still grow with $m$ because the top-level hashes require their bytes.
 
-Proving is intentionally unoptimized, using naive Newton interpolation and polynomial long division. If statement $i$ contains $k_i$ points, interpolation costs $O\!\left(\sum_{i=0}^{m} k_i^2\right)$, long division costs $O\!\left(B \sum_{i=0}^{m} k_i\right)$, and FFTs cost $O(mB \log B)$. Verification also uses $O\!\left(\sum_{i=0}^{m} k_i^2\right)$ interpolation and $O(m)$ G1 operations, with a constant number of pairing terms. The structure supports full capacity, but memory and runtime have not been benchmarked at 16,777,216 elements. `Tree` retains the original values and polynomial coefficients for every used blob, with substantial memory overhead appropriate to a proof of concept.
+Proving uses quadratic Newton interpolation with batched denominator inversion and in-place coefficient updates, followed by polynomial long division. It reuses the interpolation and vanishing polynomials when computing the reduction weights. If statement $i$ contains $k_i$ points, interpolation costs $O\!\left(\sum_{i=0}^{m} k_i^2\right)$ and long division costs $O\!\left(B \sum_{i=0}^{m} k_i\right)$. Given a constructed `Tree`, polynomial aggregation costs $O(mB)$, and the two coefficient-to-blob FFTs (for $Q$ and $g$) cost $O(B \log B)$, in addition to the KZG commitment and opening work. Tree construction separately converts and commits every used blob.
+
+Verification evaluates the barycentric formula directly at $z$, with $O\!\left(\sum_{i=0}^{m} k_i^2\right)$ field work and one shared batch inversion. It combines the $m+1$ statement commitments using a batched G1 multiscalar multiplication, then checks one equation with two pairing terms.
 
 ## 5. Transcript and encoding
 
@@ -157,22 +159,7 @@ Prover and verifier run the same retries; no nonce is sent and proof sizes stay 
 
 Queries must be nonempty, strictly increasing, unique, and in range. The child list is derived from the indices in the proof, and its commitment count must match exactly. The wire format is `k || index_0 || ... || index_(k-1) || C_child_0 || ... || C_child_(m-1) || D || W`, using minimal unsigned base-128 varints for counts and indices and 48-byte compressed points. Its length is $v(k) + \sum_j v(i_j) + 48m + 96$; trailing bytes are rejected. Varints longer than four bytes, redundant high zero groups, and truncated encodings are rejected. The decoder bounds the query count by the trusted root length and the available input before allocation, then validates decoded indices against the root. The transcript encoding above remains u64 big-endian. This replaces the previous Rust u64 proof wire format; existing serialized proofs must be regenerated or decoded with the old implementation and re-encoded. All input G1 points undergo decompression, subgroup checks, and re-encoding checks before arithmetic. The point at infinity is valid because zero polynomials can legitimately produce zero commitments and witnesses.
 
-## 6. Why aggregation prevents simple forgeries
 
-Suppose at least one opening claim is false. Deriving $\rho$ after fixing the statement makes deliberate cancellation between polynomial errors difficult. Fixing $D$ before deriving $z$ prevents the prover from choosing $Q$ after seeing the checking point. Multiplying the relation
+## 6. Security
 
-$$
-Q(z) = \sum_{i=0}^{m} \rho^i \frac{f_i(z) - I_i(z)}{Z_i(z)}
-$$
-
-by the product of all $Z_i(z)$ turns it into a polynomial identity check. Except when the aggregation coefficients cancel the errors, a false relation can hold only at finitely many checking points. Otherwise, acceptance requires breaking KZG opening binding. A formal analysis needs assumptions such as the random-oracle and algebraic-group models; this intuition is not an unconditional security proof.
-
-The implementation also avoids an invalid shortcut: sending only $\sum_i \rho^i W_i$ and $\sum_i \rho^i z_i W_i$ and applying one pairing check. Without proving the relation between those two points, the second can be forged. This construction instead fixes a quotient commitment $D$ and produces an actual KZG opening of a single polynomial derived from $D$ and the statement.
-
-## 7. Security assumptions, boundaries, and validation
-
-Security depends on a trusted public root, secrecy of the Ethereum SRS's toxic waste, computational binding of KZG, and the collision-resistance and random-oracle assumptions for SHA-256. The construction is neither a hiding commitment nor a zero-knowledge proof. It has not undergone an independent cryptographic audit and makes no guarantee of being free of vulnerabilities. Its safeguards are a standard reduction structure, explicit assumptions, strict input validation, and negative tests; testing does not replace an audit.
-
-Unsafe blst calls are confined to the private algebra module. Inputs and outputs are initialized, fixed-size objects, with no manual ownership transfer or external raw pointers. Public callers cannot construct internal field elements. Malformed structure or points return `Err`; well-encoded but incorrect proofs generally return `Ok(false)`. Applications must accept only `Ok(true)`. Applications must also limit resource consumption for large public statements according to their deployment needs; this proof of concept is not designed as a network service.
-
-Tests cover canonical value ordering, permutation-invariant roots and verification, duplicate value rejection, same-child and cross-child openings, all 4096 slots, empty byte strings, tampered values/indices/roots/lengths/children/both proof points, duplicate and out-of-range queries, malformed and non-subgroup points, exact wire encoding, field reduction, nonce retries for zero and queried-point challenges, and FFT consistency with c-kzg. They neither exhaust all possible inputs nor constitute a security proof.
+Security depends on a trusted public root, secrecy of the Ethereum SRS's toxic waste, computational binding of KZG, and the collision-resistance and random-oracle assumptions for SHA-256. The construction is neither a hiding commitment nor a zero-knowledge proof. It has not undergone an independent cryptographic audit and makes no guarantee of being free of vulnerabilities.

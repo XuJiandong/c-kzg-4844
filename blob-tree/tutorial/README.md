@@ -148,6 +148,12 @@ At the boundaries, authenticate only the first or last element:
 - **Non-membership from neighbors.** For a root built from sorted, unique values, applications can check absence using adjacent-neighbor membership proofs
 - **CKB-VM verification.** The `verification-only` feature supports `no_std` verification
 
+## 6. Differences from SMT
+
+- **Root format.** An SMT root is a hash. A blob-tree root contains a 48-byte KZG commitment and the element count `n`; verification requires both.
+- **Element format.** Blob-tree elements are arbitrary byte strings, including empty strings, rather than fixed-size hashes. The tree hashes them internally.
+- **Element order.** Values must be unique and are stored in lexicographic byte order. Construction and verification sort supplied values internally, so callers can pass them in any order. Query indices refer to positions in the sorted tree and must be strictly increasing.
+
 ## Continues
 
 Continue with the [design and terminology](../DESIGN.md)

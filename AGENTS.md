@@ -1,3 +1,9 @@
+Two important projects are maintained and developed in this workspace:
+- blob-tree (in the blob-tree folder)
+- c-kzg, the RISC-V version (in the bindings/rust folder)
+
+Ignore all other bindings and do not update them.
+
 ## Tests
 The following tests must be passed after final changes:
 ```

@@ -76,6 +76,7 @@ fn main() {
         // Use RV64 multiplication assembly with C fallbacks for other operations.
         let mut blst = cc.clone();
         blst.define("__BLST_RISCV_ASM__", None)
+            .file(blst_base_dir.join("src/asm/blst_mont_rv64.S"))
             .file(blst_base_dir.join("src/asm/blst_mul_mont_384.riscv.S"))
             .file(blst_base_dir.join("src/asm/blst_mul_mont_384x.riscv.S"))
             .file(blst_base_dir.join("src/server.c"))

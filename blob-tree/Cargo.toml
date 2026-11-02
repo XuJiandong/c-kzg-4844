@@ -1,0 +1,44 @@
+[package]
+name = "blob-tree"
+version = "0.1.0"
+edition = "2021"
+license = "Apache-2.0"
+
+[features]
+default = ["prover"]
+std = ["c-kzg/std", "sha2/std"]
+prover = ["std", "c-kzg/ethereum_kzg_settings", "c-kzg/portable"]
+verification-only = ["c-kzg/verification-only"]
+
+[dependencies]
+c-kzg = { path = "..", default-features = false }
+sha2 = { version = "0.10.9", default-features = false }
+
+[target.'cfg(not(target_arch = "riscv64"))'.dependencies]
+blst = { version = "0.3.16", default-features = false }
+
+[dev-dependencies]
+blake2b-rs = "0.2"
+criterion = "0.5.1"
+sparse-merkle-tree = { version = "0.6.1", features = ["trie"] }
+
+[[bench]]
+name = "generation"
+harness = false
+required-features = ["prover"]
+
+[[example]]
+name = "basic"
+required-features = ["prover"]
+
+[[example]]
+name = "proof_size"
+required-features = ["prover"]
+
+[[example]]
+name = "generate-fixtures"
+required-features = ["prover"]
+
+[[test]]
+name = "membership"
+required-features = ["prover"]

@@ -82,7 +82,7 @@ mod tests {
     }
 
     fn trusted_setup_file() -> &'static Path {
-        Path::new("../../src/trusted_setup.txt")
+        Path::new(concat!(env!("CARGO_MANIFEST_DIR"), "/src/trusted_setup.txt"))
     }
 
     #[test]

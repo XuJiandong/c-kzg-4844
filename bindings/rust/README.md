@@ -1,30 +1,27 @@
-# Rust Bindings for the C-KZG Library
+# c-kzg-4844 verification on CKB-VM
 
-This directory contains Rust bindings for the C-KZG-4844 library.
+The `verification-only` feature exposes a `KzgVerifier` on ckb-vm. It excludes the setup loader, commitment/proof generation, recovery, and EIP-7594.
 
-## Prerequisites
+## Build and tests
 
-Make sure you have `cargo` and `rust` installed.
-You can do so with [`rustup`](https://rustup.rs):
+Prerequisites: Rust with `riscv64imac-unknown-none-elf` installed, Clang >= 19
+with a RISC-V backend, LLVM's `llvm-ar`, Python 3, and the already installed
+`ckb-debugger`.
 
-```
-curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
-```
+From the repository root:
 
-## Build
-
-```
-cargo build --release
+```sh
+git submodule update --init --recursive
+make ckb-test
 ```
 
-## Test
+## Library use on ckb-vm
 
-```
-cargo test --release
+```toml
+c-kzg = { path = "..", default-features = false, features = ["verification-only"] }
 ```
 
-## Update `generated.rs`
-
-```
-cargo build --features generate-bindings
+```rust,ignore
+let verifier = c_kzg::KzgVerifier::new(&authenticated_g2_x)?;
+let valid = verifier.verify_kzg_proof(&commitment, &z, &y, &proof)?;
 ```

@@ -64,6 +64,45 @@ This proof size problem is why we seek a new tree structure rather than relying 
 
 The count and index savings depend on their values; see the encoding details below.
 
+## Verification cycles
+The verification cost does not scale directly with the total number of elements in the tree. It depends primarily on the number of queried elements and children.
+
+Run the CKB-VM verification benchmark from the repository root:
+
+```sh
+make -C ckb-tests bench-blob-tree
+```
+
+| Fixture | Queried elements | Queried children | Verification cycles |
+| --- | ---: | ---: | ---: |
+| `single.bin` | 1 | 1 | 57 M |
+| `multirow.bin` | 6 | 2 | 60 M |
+| `large.bin` | 1000 | 25 | 163 M |
+
+Unlike an SMT, the elements in a blob tree are ordered. Elements can also be arbitrary strings with meaning, rather than hashes.
+Nearby elements, such as those sharing the same prefix, share the same children. Therefore, in a real project, giving elements a common prefix (since the elements are not hashes, we control them) can greatly reduce the number of queried children. Note that 25 children is already a relatively large number.
+
+## Proof generating time
+
+Run the native proof-generation benchmark(on m4 mac):
+
+```sh
+cargo bench --manifest-path blob-tree/Cargo.toml --locked --bench generation -- proof
+```
+
+With queries spread evenly across each tree:
+
+| Tree elements | Queried elements | Proof generation time | 
+| ---: | ---: | ---: | 
+| 100,000 | 10 | 57 ms | 
+| 100,000 | 100 | 65 ms |
+| 100,000 | 1000 | 104 ms | 
+| 1,000,000 | 10 | 55 ms | 
+| 1,000,000 | 100 | 81 ms |
+| 1,000,000 | 1000 | 154 ms | 
+
+The benchmark measures `Tree::prove` on an already constructed tree, excluding tree construction and verification. Increasing the query count from 10 to 1000 (100×) takes about 1.83× as long for 100,000 elements and 2.76× as long for 1,000,000 elements. These are native execution times from separate runs and depend on the machine and query distribution.
+
 ### The complete reduction, step by step
 
 The reduction first commits to an aggregate quotient polynomial and then checks its relation to the claimed openings at a transcript-derived point. All five steps are shown below. Here, statement 0 is the top level, and statements 1 through m are the queried children in ascending child-index order.

@@ -30,29 +30,30 @@ fn commitment(c: &mut Criterion) {
 }
 
 fn proof(c: &mut Criterion) {
-    const TREE_LEN: usize = 100_000;
-    let tree = Tree::new(&input(TREE_LEN)).unwrap();
-    let mut group = c.benchmark_group("proof/100000");
-    group.sampling_mode(SamplingMode::Flat);
-    for count in [10, 100, 1_000] {
-        // Spread queries across the tree, matching the large CKB fixture at 1,000 leaves.
-        let indices = (0..count).map(|i| i * TREE_LEN / count).collect::<Vec<_>>();
-        let (values, proof) = tree.prove(&indices).unwrap();
-        assert!(verify(tree.root(), &values, &proof).unwrap());
-        group.throughput(Throughput::Elements(count as u64));
-        group.bench_with_input(
-            BenchmarkId::from_parameter(count),
-            &indices,
-            |b, indices| {
-                b.iter_batched(
-                    || (),
-                    |()| tree.prove(black_box(indices)).unwrap(),
-                    BatchSize::PerIteration,
-                );
-            },
-        );
+    for tree_len in [100_000, 1_000_000] {
+        let tree = Tree::new(&input(tree_len)).unwrap();
+        let mut group = c.benchmark_group(format!("proof/{tree_len}"));
+        group.sampling_mode(SamplingMode::Flat);
+        for count in [10, 100, 1_000] {
+            // Spread queries evenly across the tree.
+            let indices = (0..count).map(|i| i * tree_len / count).collect::<Vec<_>>();
+            let (values, proof) = tree.prove(&indices).unwrap();
+            assert!(verify(tree.root(), &values, &proof).unwrap());
+            group.throughput(Throughput::Elements(count as u64));
+            group.bench_with_input(
+                BenchmarkId::from_parameter(count),
+                &indices,
+                |b, indices| {
+                    b.iter_batched(
+                        || (),
+                        |()| tree.prove(black_box(indices)).unwrap(),
+                        BatchSize::PerIteration,
+                    );
+                },
+            );
+        }
+        group.finish();
     }
-    group.finish();
 }
 
 criterion_group! {

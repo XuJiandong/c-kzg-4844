@@ -1,6 +1,6 @@
 # Blob Tree Tutorial
 
-In this tutorial, we introduce a blob tree which is based on [c-kzg-4844]([c-kzg-4844](https://github.com/ethereum/c-kzg-4844)). We already have [SMT](https://github.com/nervosnetwork/sparse-merkle-tree), but SMT proofs are quite large, especially when proving multiple elements at once. So we propose a new solution: the blob tree. At its core, it is a two-level path tree built on [c-kzg-4844](https://github.com/ethereum/c-kzg-4844), with [Shplonk](https://eprint.iacr.org/2020/081.pdf). Commit to as many as 16,777,216（4096*4096) elements in a tree with just two levels. Whether you query one element or many, the proof reduces to one KZG verification call. 
+In this tutorial, we introduce a blob tree which is based on [c-kzg-4844]([c-kzg-4844](https://github.com/ethereum/c-kzg-4844)). We already have [SMT](https://github.com/nervosnetwork/sparse-merkle-tree), but SMT proofs are quite large, especially when proving multiple elements at once. So we propose a new solution: the [blob tree](https://github.com/XuJiandong/c-kzg-4844/tree/port-riscv/blob-tree). At its core, it is a two-level path tree built on c-kzg-4844, with [Shplonk](https://eprint.iacr.org/2020/081.pdf). Commit to as many as 16,777,216（4096*4096) elements in a tree with just two levels. Whether you query one element or many, the proof reduces to one KZG verification call. 
 
 ## SMT Limitation
 Although an SMT can prove multiple elements in a tree, it has an obvious limitation: proof size. Let's walk through some common SMT usage:

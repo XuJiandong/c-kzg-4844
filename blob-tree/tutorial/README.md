@@ -1,10 +1,41 @@
-# Blob Tree: Two levels of blobs, one membership proof
+# Blob Tree Tutorial
 
-We already have [SMT](https://github.com/nervosnetwork/sparse-merkle-tree), but SMT proofs are quite large, especially when proving multiple elements at once. So we propose a new solution: the blob tree. At its core, it is a two-level path tree built on [c-kzg-4844](https://github.com/ethereum/c-kzg-4844), with [Shplonk](https://eprint.iacr.org/2020/081.pdf). Commit to as many as 16,777,216（4096*4096) elements in a tree with just two levels. Whether you query one element or many, the proof reduces to one KZG verification call. 
+In this tutorial, we introduce a blob tree which is based on [c-kzg-4844]([c-kzg-4844](https://github.com/ethereum/c-kzg-4844)). We already have [SMT](https://github.com/nervosnetwork/sparse-merkle-tree), but SMT proofs are quite large, especially when proving multiple elements at once. So we propose a new solution: the [blob tree](https://github.com/XuJiandong/c-kzg-4844/tree/port-riscv/blob-tree). At its core, it is a two-level path tree built on c-kzg-4844, with [Shplonk](https://eprint.iacr.org/2020/081.pdf). Commit to as many as 16,777,216（4096*4096) elements in a tree with just two levels. Whether you query one element or many, the proof reduces to one KZG verification call. 
 
-## 1. Tree structure
+## SMT Limitation
+Although an SMT can prove multiple elements in a tree, it has an obvious limitation: proof size. Let's walk through some common SMT usage:
 
-Every position has a two-level path.
+| Elements on tree | Elements to be proven | Proof size (bytes) |
+| ---: | ---: | ---: |
+| 1000 | 1 | 333 |
+| 1000 | 10 | 2592 |
+| 10000 | 1 | 432 |
+| 10000 | 10 | 3683 |
+| 100000 | 1 | 599 |
+| 100000 | 10 | 4704 |
+| 100000 | 100 | 36850 |
+| 100000 | 1000 | 271763 |
+
+Proof sizes can easily exceed 200K. Since a CKB transaction is limited to 500K, some applications become infeasible.
+
+
+## Introduction to c-kzg-4844
+c-kzg-4844 implements KZG, a constant-sized polynomial commitment scheme introduced by Kate, Zaverucha and Goldberg in 2010.
+It has the following properties:
+- constant proof size: 48 bytes
+- constant verification time
+- batch proofs
+
+From a proof-size perspective, its performance is excellent, which is why we build the new tree on top of it.
+In c-kzg-4844, a blob holds 4096 elements, each 32 bytes. That is the limitation: we need more than 4096 elements. So we use
+a blob tree to expand the number of supported elements.
+
+
+## Tree structure
+To expand the element count, we use multiple blobs. The most straightforward approach is still a tree design with two levels.
+This supports up to 4096*4096 elements on the tree, which is sufficient for a typical Dapp. We do not add a third level to support
+even more elements, because doing so significantly increases proof size as well as proof and verification time.
+
 
 Split an element's zero-based index $i$ into $\mathrm{row} = \lfloor \frac{i}{4096} \rfloor$ and $\mathrm{column} = i \bmod 4096$. Each bottom-level blob stores element hashes. The top-level blob stores hashes of child commitments. Both hashes are reduced modulo the BLS12-381 scalar field modulus $r$.
 
@@ -12,13 +43,8 @@ Split an element's zero-based index $i$ into $\mathrm{row} = \lfloor \frac{i}{40
 
 ![The path from element 4103 through child slot 7 and top-level slot 1 to the public root (R, n). Both levels have 4096 slots.](assets/tree-structure.svg)
 
-The root is constructed from the bottom up. Lines show dependencies; the diagram does not draw all 4096 slots to scale.
-
-## 2. Proof reduction
-
-Share child commitments, then combine the openings.
-
-A proof includes a varint query count and a varint index per queried element, then one commitment for each queried child, followed by two points: the aggregate quotient commitment $D$ and the opening witness $W$. Each point occupies 48 bytes. Counts and indices use canonical unsigned base-128 varints, taking one to four bytes over the supported range. The maximum query count is $2^{24}$, and indices range from $0$ to $2^{24}-1$.
+## Proof layout
+In this section, we explain how proof is organized. A proof includes a varint query count and a varint index per queried element, then one commitment for each queried child, followed by two points: the aggregate quotient commitment $D$ and the opening witness $W$. Each point occupies 48 bytes. Counts and indices use canonical unsigned base-128 varints, taking one to four bytes over the supported range. The maximum query count is $2^{24}$, and indices range from $0$ to $2^{24}-1$.
 
 For queries `[0, 7, 4096, 4097]`, child 0 supplies columns 0 and 7, while child 1 supplies columns 0 and 1. The four queries share two child commitments.
 
@@ -28,7 +54,7 @@ For queries `[0, 7, 4096, 4097]`, child 0 supplies columns 0 and 7, while child 
 
 ![The 199-byte proof: 7 bytes of count and indices, 96 bytes of child commitments, and 96 bytes for D and W.](assets/proof-layout.svg)
 
-## Proof sizes
+The table below lists some proof size scenarios:
 
 | Queries | Children m | Proof bytes |
 | --- | --- | --- |
@@ -40,29 +66,26 @@ For queries `[0, 7, 4096, 4097]`, child 0 supplies columns 0 and 7, while child 
 
 $\text{Proof size} = v(k) + \sum_{j=0}^{k-1} v(i_j) + 48 m + 96$ bytes, where $v(x)$ is the number of bytes in the unsigned varint encoding of $x$ (including one byte for zero). This includes query indices and their count but excludes the public root and original elements. Since each varint takes at most four bytes, $4 + 4k + 48m + 96$ remains an upper bound. Each example assumes the vector is long enough to contain every queried index. Verification always uses two pairing terms.
 
-Consider the scenario where many elements must be proven. The `48m` term accounts for the child commitments and can be estimated from the number of queried children. The worst case occurs when every child is in use. Since the number of children is about n/4096, where n is the total element count, the `48m` term is about n/85. For n = 100,000 and n = 1,000,000, this gives roughly 1.18K and 11.8K respectively. With every child queried, the proof is at most 196708 + 4k bytes; whether it fits in a CKB transaction also depends on the query count and the separately supplied elements.
+Consider the scenario where many elements must be proven. The `48m` term accounts for the child commitments and can be estimated from the number of queried children. The worst case occurs when every child is in use. Since the number of children is about n/4096, where n is the total element count, the `48m` term is about n/85. For n = 100,000 and n = 1,000,000, this gives roughly 1.18K and 11.8K respectively. With every child queried, the proof is at most 196708 + 4k bytes. This is the theoretical maximum proof size.
 
 Compared with the [SMT](https://github.com/nervosnetwork/sparse-merkle-tree) below, the reduction is significant:
 ```
 cargo run --manifest-path blob-tree/Cargo.toml --locked --example proof_size --release
-N (leaves)  M (queries) proof size(bytes)
+| Elements on tree | Elements to be proven | Proof size (bytes) |
     100000            1            146
     100000           10            604
     100000          100           1579
     100000         1000           4132
 
 cargo run --manifest-path blob-tree/Cargo.toml --locked --example smt_proof_size --release
-N (leaves)  M (queries) proof size(bytes)
+| Elements on tree | Elements to be proven | Proof size (bytes) |
     100000            1            599
     100000           10           4704
     100000          100          36850
     100000         1000         271763    
 ```
 
-
-This proof size problem is why we seek a new tree structure rather than relying on the existing SMT.
-
-The count and index savings depend on their values; see the encoding details below.
+This proof size problem is why we seek a new tree structure rather than relying on the existing SMT. The count and index savings depend on their values; see the encoding details below.
 
 ## Verification cycles
 The verification cost does not scale directly with the total number of elements in the tree. It depends primarily on the number of queried elements and children.
@@ -103,13 +126,12 @@ With queries spread evenly across each tree:
 
 The benchmark measures `Tree::prove` on an already constructed tree, excluding tree construction and verification. Increasing the query count from 10 to 1000 (100×) takes about 1.83× as long for 100,000 elements and 2.76× as long for 1,000,000 elements. These are native execution times from separate runs and depend on the machine and query distribution.
 
-### The complete reduction, step by step
+## The complete reduction, step by step
+In this section, we explain how the shplonk is used in blob tree. The reduction first commits to an aggregate quotient polynomial and then checks its relation to the claimed openings at a transcript-derived point. All five steps are shown below. 
 
-The reduction first commits to an aggregate quotient polynomial and then checks its relation to the claimed openings at a transcript-derived point. All five steps are shown below. Here, statement 0 is the top level, and statements 1 through m are the queried children in ascending child-index order.
+**Where Shplonk is used:** steps 2–4 perform the Shplonk-style reduction: aggregate the quotient polynomials, commit to the aggregate before deriving the checking point, then reduce all claimed openings to the single claim `g(z) = y`. Step 1 binds the public statement to the transcript; step 5 completes the proof with a standard single-point KZG opening and verification.
 
-> **Where Shplonk is used:** steps 2–4 perform the Shplonk-style reduction: aggregate the quotient polynomials, commit to the aggregate before deriving the checking point, then reduce all claimed openings to the single claim `g(z) = y`. Step 1 binds the public statement to the transcript; step 5 completes the proof with a standard single-point KZG opening and verification. This implementation defines its own transcript and wire format; it does not claim interoperability with other Shplonk implementations.
-
-#### Step 1: Bind everything the proof claims.
+### Step 1: Bind everything the proof claims.
 
 $$
 \begin{aligned}
@@ -120,7 +142,7 @@ $$
 
 The root contains both the commitment and vector length. The top-level opening claims child-commitment hashes; each child opening claims element hashes. Queries and child commitments use their canonical order. `Encode` includes the counts and lengths specified in the design document.
 
-#### Step 2: Combine the quotient polynomials.
+### Step 2: Combine the quotient polynomials.
 
 $$
 \begin{aligned}
@@ -132,7 +154,7 @@ $$
 
 $I_{i}$ interpolates the claimed point-value pairs, and $Z_{i}$ vanishes at their evaluation points. The division has no remainder when the opening claims are correct. The nonzero coefficient $\rho$ is derived from the complete transcript.
 
-#### Step 3: Fix D before deriving the checking point.
+### Step 3: Fix D before deriving the checking point.
 
 $$
 \begin{aligned}
@@ -143,7 +165,7 @@ $$
 
 $D$ is the first of the two additional proof points. Deriving $z$ from both $T$ and $D$ binds the checking point to the quotient commitment. Each `hash_field` call uses domain-separated, length-prefixed SHA-256 followed by reduction modulo $r$.
 
-#### Step 4: Reconstruct the combined commitment.
+### Step 4: Reconstruct the combined commitment.
 
 $$
 \begin{aligned}
@@ -156,7 +178,7 @@ $$
 
 The remaining claim is $g ( z ) = y$. The verifier derives every weight, the commitment $C_{g}$, and $y$ from the public statement and $D$. No additional evaluations need to be transmitted.
 
-#### Step 5: Check one equation with two pairing terms.
+### Step 5: Check one equation with two pairing terms.
 
 $$
 \begin{aligned}
@@ -165,15 +187,13 @@ e ( C_{g} - y \cdot G_{1} , G_{2} ) & = e ( W , [ \tau ] G_{2} - z \cdot G_{2} )
 \end{aligned}
 $$
 
-$W$ is the second additional 48-byte point. The verifier calls c-kzg's `verify_kzg_proof` once. The pairing equation uses two Miller loops and one final exponentiation. Beyond the count, indices, and child commitments, the proof always contains exactly 96 bytes.
+$W$ is the second additional 48-byte point. The verifier calls c-kzg's `verify_kzg_proof` once. The pairing equation uses two Miller loops and one final exponentiation. Beyond the count, indices, and child commitments, the proof always contains exactly 96 bytes. 
 
-The order is $T \to \rho \to D \to z \to W$. This static tutorial explains the structure and proof size.
-
-## 3. Proof size optimization
+## Extra proof size optimization
 
 The implementation now encodes the query count and each absolute index as an unsigned base-128 [varint](https://protobuf.dev/programming-guides/encoding/#base-128-varints), without protobuf field tags. Each byte carries seven data bits, least-significant group first; the high bit indicates another byte follows. Values below 128 take one byte, below 16,384 take two, below 2,097,152 take three, and the remaining supported values take four.
 
-## 4. Support non-membership
+## Support non-membership
 We require all elements in the tree to be ordered and unique. In a sorted tree, prove that a value $e$ is absent by authenticating its two adjacent neighbors:
 
 $$
@@ -188,20 +208,15 @@ At the boundaries, authenticate only the first or last element:
 - If $e < e_0$, prove membership of $e_0$ at index $0$.
 - If $e_{n-1} < e$, prove membership of $e_{n-1}$ at index $n-1$, using the trusted length $n$.
 
-## 5. Highlights
+## Conclusion
+The followings are the highlights, properties and limitation of blob tree:
 
 - **Flexible values.** Elements are arbitrary byte strings, including empty strings, with no fixed field-size limit. Values must be unique;
-- **Two levels, large capacity.** The structure supports up to 16,777,216 elements.
-- **One KZG verification for many queries.** Both levels and all queried elements reduce to one KZG check with two pairing terms. 
+- **Two levels, limited capacity.** The structure supports up to 16,777,216 elements.
+- **One KZG verification for many queries.** Both levels and all queried elements reduce to one KZG check with two paring term. 
 - **Shared proof overhead.** Queries in the same child share one 48-byte commitment. When queries are locally distributed, the proof size doesn't change.
 - **Non-membership from neighbors.** For a root built from sorted, unique values, applications can check absence using adjacent-neighbor membership proofs
-- **CKB-VM verification.** The `verification-only` feature supports `no_std` verification
 
-## 6. Differences from SMT
-
-- **Root format.** An SMT root is a hash. A blob-tree root contains a 48-byte KZG commitment and the element count `n`; verification requires both.
-- **Element format.** Blob-tree elements are arbitrary byte strings, including empty strings, rather than fixed-size hashes. The tree hashes them internally.
-- **Element order.** Values must be unique and are stored in lexicographic byte order. Construction and verification sort supplied values internally, so callers can pass them in any order. Query indices refer to positions in the sorted tree and must be strictly increasing.
 
 ## Continues
 
